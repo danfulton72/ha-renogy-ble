@@ -10,6 +10,7 @@ from .const import (
     RENOGY_BT_PREFIX,
     RENOGY_INVERTER_PREFIX,
     RENOGY_REGO_INVERTER_PREFIX,
+    RIV_INVERTER_MODEL_PREFIX,
     DeviceType,
 )
 
@@ -101,9 +102,9 @@ def detect_device_type_from_ble_name(
 def detect_device_type_from_model(model: str | None) -> str | None:
     """Infer the device type from a device-reported model string.
 
-    BLE names cannot distinguish a BT-TH module on a solar controller from
-    one on a DC-DC charger, but the model register can. Returns None when
-    the model does not identify a specific device type.
+    Generic BT-TH modules do not identify the attached Renogy product family,
+    so the model register is authoritative when it identifies a known family.
+    Returns None when the model does not identify a specific device type.
     """
     if not isinstance(model, str):
         return None
@@ -111,6 +112,9 @@ def detect_device_type_from_model(model: str | None) -> str | None:
     normalized = model.strip()
     if not normalized:
         return None
+
+    if normalized.upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+        return DeviceType.INVERTER.value
 
     if DCC_MODEL_PATTERN.match(normalized):
         return DeviceType.DCC.value
