@@ -1,0 +1,118 @@
+name: Apply RIV control state readback
+
+on:
+  push:
+    branches:
+      - fix/riv-control-state-readback
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/riv-control-state-readback
+      - name: Apply readback implementation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"anchor not found in {path}: {old[:80]!r}")
+              path.write_text(text.replace(old, new, 1))
+
+          ble = Path("custom_components/renogy_ble/ble.py")
+          replace_once(
+              ble,
+              "    DEFAULT_UNAVAILABLE_RETRY_INTERVAL,\n    DeviceType,\n    NonShuntConnectionMode,\n",
+              "    DEFAULT_UNAVAILABLE_RETRY_INTERVAL,\n    RIV_INVERTER_MODEL_PREFIX,\n    DeviceType,\n    InverterRegister,\n    NonShuntConnectionMode,\n",
+          )
+          replace_once(
+              ble,
+              "LOAD_CONTROL_REGISTER = getattr(renogy_ble_module, \"LOAD_CONTROL_REGISTER\", 0x010A)\nSHUNT_RECONNECT_DELAY_SECONDS = 10\n",
+              '''LOAD_CONTROL_REGISTER = getattr(renogy_ble_module, "LOAD_CONTROL_REGISTER", 0x010A)\nRIV_INVERTER_INIT_CHAR_UUID = getattr(\n    renogy_ble_module,\n    "INVERTER_INIT_CHAR_UUID",\n    "0000ffd4-0000-1000-8000-00805f9b34fb",\n)\nRIV_INVERTER_INIT_DELAY = float(\n    getattr(renogy_ble_module, "INVERTER_INIT_DELAY", 1.0)\n)\nRIV_INVERTER_INTER_COMMAND_DELAY = float(\n    getattr(renogy_ble_module, "INVERTER_INTER_COMMAND_DELAY", 0.3)\n)\nRIV_INVERTER_COMMAND_TIMEOUT = float(\n    getattr(renogy_ble_module, "INVERTER_COMMAND_TIMEOUT", 10.0)\n)\n\n# Confirmed RIV1230PCH-23S settings read back from the same Modbus register\n# blocks observed in the Renogy app HCI capture. Each field tuple is\n# (coordinator key, word offset, scale). Unmapped words are intentionally ignored.\nRIV_CONTROL_READ_SPECS: tuple[\n    tuple[int, int, tuple[tuple[str, int, float], ...]], ...\n] = (\n    (\n        InverterRegister.BEEP,\n        2,\n        (("inverter_beep", 0, 1.0), ("inverter_output", 1, 1.0)),\n    ),\n    (\n        InverterRegister.CHARGE_CURRENT,\n        10,\n        (\n            ("inverter_charge_current", 0, 0.1),\n            ("inverter_equalization_voltage", 3, 0.1),\n            ("inverter_boost_voltage", 4, 0.1),\n            ("inverter_float_voltage", 5, 0.1),\n            ("inverter_low_voltage_warn", 8, 0.1),\n            ("inverter_overdischarge_shutdown", 9, 0.1),\n        ),\n    ),\n    (\n        InverterRegister.OUTPUT_PRIORITY,\n        1,\n        (("inverter_output_priority", 0, 1.0),),\n    ),\n    (\n        InverterRegister.BATTERY_OVER_VOLTAGE,\n        6,\n        (\n            ("inverter_over_voltage", 0, 0.1),\n            ("inverter_overvoltage_recovery", 1, 0.1),\n            ("inverter_undervoltage_recovery", 2, 0.1),\n            ("inverter_lithium_activation", 5, 1.0),\n        ),\n    ),\n)\n\nSHUNT_RECONNECT_DELAY_SECONDS = 10\n''',
+          )
+          replace_once(
+              ble,
+              '''                # Update coordinator data if successful\n                if success and device.parsed_data:\n                    self.data = dict(device.parsed_data)\n                    self.logger.debug("Updated coordinator data: %s", self.data)\n                    self._warn_if_model_mismatch()\n\n                return success\n            finally:\n''',
+              '''                # Read the writable RIV settings as part of every successful\n                # inverter poll. The upstream library currently reads telemetry and a\n                # subset of setpoints, but not the switch/select state registers.\n                if success and device.parsed_data:\n                    await self.async_read_riv_control_state()\n                    self.data = dict(device.parsed_data)\n                    self.logger.debug("Updated coordinator data: %s", self.data)\n                    self._warn_if_model_mismatch()\n\n                return success\n            finally:\n''',
+          )
+          replace_once(
+              ble,
+              '''    def _warn_if_model_mismatch(self) -> None:\n        """Warn once when the reported model implies a different device type.\n''',
+              '''    @staticmethod\n    def _decode_modbus_words(response: bytes, word_count: int) -> list[int] | None:\n        """Decode words from a validated Modbus 0x03 response."""\n        if len(response) < 5 or response[1] != 0x03:\n            return None\n        byte_count = response[2]\n        expected_bytes = word_count * 2\n        if byte_count < expected_bytes or len(response) < 3 + byte_count + 2:\n            return None\n        return [\n            int.from_bytes(response[3 + index : 5 + index], "big")\n            for index in range(0, expected_bytes, 2)\n        ]\n\n    async def async_read_riv_control_state(self) -> dict[str, int | float]:\n        """Read confirmed RIV writable settings and merge them into coordinator data."""\n        device = self.device\n        if device is None or self.device_type != DeviceType.INVERTER.value:\n            return {}\n\n        model = str(device.parsed_data.get("model", "")).upper()\n        if not model.startswith(RIV_INVERTER_MODEL_PREFIX):\n            return {}\n\n        prepare_session = getattr(self._ble_client, "_prepare_session", None)\n        ensure_session_ready = getattr(self._ble_client, "_ensure_session_ready", None)\n        read_modbus_register = getattr(self._ble_client, "_read_modbus_register", None)\n        close_session = getattr(self._ble_client, "_close_session", None)\n        if not all(\n            callable(method)\n            for method in (\n                prepare_session,\n                ensure_session_ready,\n                read_modbus_register,\n                close_session,\n            )\n        ):\n            self.logger.debug(\n                "Installed renogy-ble does not expose the session helpers needed "\n                "for RIV setting readback"\n            )\n            return {}\n\n        session = await prepare_session(device)\n        session_lock = getattr(session, "lock", None)\n        if session_lock is None:\n            await close_session(device.address, device.name, session, remove=True)\n            return {}\n\n        updates: dict[str, int | float] = {}\n        remove_session = False\n        async with session_lock:\n            try:\n                await ensure_session_ready(device, session)\n                client = getattr(session, "client", None)\n                if client is None:\n                    raise RuntimeError("BLE session is not connected")\n\n                await asyncio.sleep(RIV_INVERTER_INIT_DELAY)\n                try:\n                    await client.read_gatt_char(RIV_INVERTER_INIT_CHAR_UUID)\n                except Exception as err:  # noqa: BLE001\n                    self.logger.debug(\n                        "RIV init read failed before settings readback for %s: %s",\n                        device.name,\n                        err,\n                    )\n\n                for index, (register, word_count, fields) in enumerate(\n                    RIV_CONTROL_READ_SPECS\n                ):\n                    if index > 0:\n                        await asyncio.sleep(RIV_INVERTER_INTER_COMMAND_DELAY)\n\n                    response = await read_modbus_register(\n                        session,\n                        device_id=INVERTER_DEVICE_ID,\n                        function_code=0x03,\n                        register=register,\n                        word_count=word_count,\n                        cmd_name=f"RIV setting register {register}",\n                        device_name=device.name,\n                        timeout=RIV_INVERTER_COMMAND_TIMEOUT,\n                    )\n                    if response is None:\n                        if getattr(session, "desynchronized", False):\n                            break\n                        continue\n\n                    words = self._decode_modbus_words(response, word_count)\n                    if words is None:\n                        continue\n\n                    for key, word_offset, scale in fields:\n                        raw_value = words[word_offset]\n                        updates[key] = (\n                            raw_value if scale == 1.0 else raw_value * scale\n                        )\n            except Exception as err:  # noqa: BLE001\n                remove_session = True\n                self.logger.debug(\n                    "Unable to read RIV control state from %s: %s",\n                    device.name,\n                    err,\n                )\n            finally:\n                desynchronized = bool(getattr(session, "desynchronized", False))\n                if (\n                    remove_session\n                    or desynchronized\n                    or self._client_transport_mode()\n                    != NonShuntConnectionMode.PERSISTENT_SESSION.value\n                ):\n                    try:\n                        await close_session(\n                            device.address,\n                            device.name,\n                            session,\n                            remove=remove_session or desynchronized,\n                        )\n                    except Exception:  # noqa: BLE001\n                        self.logger.debug(\n                            "Unable to close RIV settings readback session for %s",\n                            device.name,\n                            exc_info=True,\n                        )\n\n        if updates:\n            device.parsed_data.update(updates)\n            current_data = dict(self.data) if isinstance(self.data, dict) else {}\n            current_data.update(updates)\n            self.data = current_data\n            self.logger.debug("Updated RIV control state: %s", updates)\n\n        return updates\n\n    def _warn_if_model_mismatch(self) -> None:\n        """Warn once when the reported model implies a different device type.\n''',
+          )
+
+          init_file = Path("custom_components/renogy_ble/__init__.py")
+          replace_once(
+              init_file,
+              '''    await _async_reconcile_model_device_type(coordinator)\n\n    LOGGER.info("Starting coordinator for Renogy BLE device %s", device_address)\n''',
+              '''    model_type_changed = await _async_reconcile_model_device_type(coordinator)\n    if model_type_changed and coordinator.device_type == DeviceType.INVERTER.value:\n        # Populate RIV switch/select/number state before entity platforms are set up,\n        # so Home Assistant does not initially render the controls as unknown.\n        try:\n            await coordinator.async_read_riv_control_state()\n        except Exception as err:  # noqa: BLE001\n            LOGGER.debug(\n                "Initial RIV control-state read failed for %s: %s",\n                device_address,\n                err,\n            )\n\n    LOGGER.info("Starting coordinator for Renogy BLE device %s", device_address)\n''',
+          )
+          replace_once(
+              init_file,
+              '''async def _async_reconcile_model_device_type(\n    coordinator: RenogyActiveBluetoothCoordinator,\n) -> None:\n    """Resolve a generic BLE entry to the product type reported by its model."""\n    data = getattr(coordinator, "data", None)\n    if not isinstance(data, dict):\n        return\n''',
+              '''async def _async_reconcile_model_device_type(\n    coordinator: RenogyActiveBluetoothCoordinator,\n) -> bool:\n    """Resolve a generic BLE entry to the reported product type; return if changed."""\n    data = getattr(coordinator, "data", None)\n    if not isinstance(data, dict):\n        return False\n''',
+          )
+          replace_once(
+              init_file,
+              '''    detected_type = detect_device_type_from_model(model)\n    if detected_type is None or detected_type == coordinator.device_type:\n        return\n''',
+              '''    detected_type = detect_device_type_from_model(model)\n    if detected_type is None or detected_type == coordinator.device_type:\n        return False\n''',
+          )
+          replace_once(
+              init_file,
+              '''    coordinator._ble_client = coordinator._build_ble_client_for_type(detected_type)\n\n\ndef _resolve_setting''',
+              '''    coordinator._ble_client = coordinator._build_ble_client_for_type(detected_type)\n    return True\n\n\ndef _resolve_setting''',
+          )
+
+          switch_file = Path("custom_components/renogy_ble/switch.py")
+          replace_once(
+              switch_file,
+              '''    @property\n    def available(self) -> bool:\n        """Return whether the inverter switch is available."""\n        return is_entity_available(self.coordinator, self._device)\n\n    async def async_turn_on(self, **_kwargs: Any) -> None:\n''',
+              '''    @property\n    def available(self) -> bool:\n        """Return whether the inverter switch is available."""\n        return is_entity_available(self.coordinator, self._device)\n\n    def _current_register_value(self) -> int | None:\n        """Return the latest raw register value from coordinator data."""\n        data = None\n        if self._device and self._device.parsed_data:\n            data = self._device.parsed_data\n        elif isinstance(self.coordinator.data, dict):\n            data = self.coordinator.data\n        if not data:\n            return None\n        value = data.get(self.entity_description.key)\n        return value if isinstance(value, int) else None\n\n    @property\n    def is_on(self) -> bool | None:\n        """Return the inverter switch state read back from the device."""\n        if self._attr_is_on is not None:\n            return self._attr_is_on\n        value = self._current_register_value()\n        if value == self.entity_description.on_value:\n            return True\n        if value == self.entity_description.off_value:\n            return False\n        return None\n\n    async def async_added_to_hass(self) -> None:\n        """Subscribe to coordinator updates for register readback changes."""\n        self.async_on_remove(\n            self.coordinator.async_add_listener(self._handle_coordinator_update)\n        )\n\n    @callback\n    def _handle_coordinator_update(self) -> None:\n        """Refresh state from the latest register readback."""\n        self._attr_is_on = None\n        if not self._device and self.coordinator.device:\n            self._device = self.coordinator.device\n        self.async_write_ha_state()\n\n    async def async_turn_on(self, **_kwargs: Any) -> None:\n''',
+          )
+
+          select_file = Path("custom_components/renogy_ble/select.py")
+          replace_once(
+              select_file,
+              '''    @property\n    def current_option(self) -> str | None:\n        return self._attr_current_option\n\n    async def async_select_option(self, option: str) -> None:\n''',
+              '''    @property\n    def current_option(self) -> str | None:\n        if self._attr_current_option is not None:\n            return self._attr_current_option\n        data = None\n        if self._device and self._device.parsed_data:\n            data = self._device.parsed_data\n        elif isinstance(self.coordinator.data, dict):\n            data = self.coordinator.data\n        if not data:\n            return None\n        raw_value = data.get("inverter_output_priority")\n        if not isinstance(raw_value, int):\n            return None\n        return next(\n            (option for option, value in self._VALUES.items() if value == raw_value),\n            None,\n        )\n\n    async def async_added_to_hass(self) -> None:\n        self.async_on_remove(\n            self.coordinator.async_add_listener(self._handle_coordinator_update)\n        )\n\n    def _handle_coordinator_update(self) -> None:\n        self._attr_current_option = None\n        if not self._device and self.coordinator.device:\n            self._device = self.coordinator.device\n        self.async_write_ha_state()\n\n    async def async_select_option(self, option: str) -> None:\n''',
+          )
+
+          test_riv = Path("tests/test_riv_inverter_controls.py")
+          replace_once(
+              test_riv,
+              '''SWITCH_SOURCE = (ROOT / "custom_components" / "renogy_ble" / "switch.py").read_text()\n''',
+              '''SWITCH_SOURCE = (ROOT / "custom_components" / "renogy_ble" / "switch.py").read_text()\nBLE_SOURCE = (ROOT / "custom_components" / "renogy_ble" / "ble.py").read_text()\nINIT_SOURCE = (ROOT / "custom_components" / "renogy_ble" / "__init__.py").read_text()\n''',
+          )
+          test_riv.write_text(
+              test_riv.read_text()
+              + '''\n\ndef test_riv_controls_are_read_back_on_poll() -> None:\n    assert "RIV_CONTROL_READ_SPECS" in BLE_SOURCE\n    assert "InverterRegister.BEEP" in BLE_SOURCE\n    assert "InverterRegister.CHARGE_CURRENT" in BLE_SOURCE\n    assert "InverterRegister.OUTPUT_PRIORITY" in BLE_SOURCE\n    assert "InverterRegister.BATTERY_OVER_VOLTAGE" in BLE_SOURCE\n    assert "await self.async_read_riv_control_state()" in BLE_SOURCE\n\n\ndef test_riv_control_entities_use_readback_state() -> None:\n    assert "def is_on(self) -> bool | None:" in SWITCH_SOURCE\n    assert "self._current_register_value()" in SWITCH_SOURCE\n    assert 'data.get("inverter_output_priority")' in SELECT_SOURCE\n    assert "async_add_listener(self._handle_coordinator_update)" in SWITCH_SOURCE\n    assert "async_add_listener(self._handle_coordinator_update)" in SELECT_SOURCE\n\n\ndef test_riv_state_is_loaded_before_platform_setup() -> None:\n    assert "await coordinator.async_read_riv_control_state()" in INIT_SOURCE\n    readback_at = INIT_SOURCE.index("await coordinator.async_read_riv_control_state()")\n    platform_at = INIT_SOURCE.index("async_forward_entry_setups")\n    assert readback_at < platform_at\n'''
+          )
+
+          test_switch = Path("tests/test_switch.py")
+          test_switch.write_text(
+              test_switch.read_text()
+              + '''\n\ndef test_riv_switch_state_comes_from_register_readback() -> None:\n    """RIV switch state should be known before Home Assistant writes anything."""\n    switch_module = _load_switch_module()\n    device = MagicMock()\n    device.name = "BT-TH-A58A7B70"\n    device.address = "CC:45:A5:8A:7B:70"\n    device.parsed_data = {\n        "model": "RIV1230PCH-23S",\n        "inverter_beep": 1,\n        "inverter_output": 2,\n        "inverter_lithium_activation": 1,\n    }\n    device.is_available = True\n\n    coordinator = MagicMock()\n    coordinator.device = device\n    coordinator.address = device.address\n    coordinator.data = dict(device.parsed_data)\n    coordinator.last_update_success = True\n\n    beep = switch_module.RenogyRegisterSwitch(\n        coordinator, device, switch_module.RIV_SWITCHES[0]\n    )\n    output = switch_module.RenogyRegisterSwitch(\n        coordinator, device, switch_module.RIV_SWITCHES[1]\n    )\n    lithium = switch_module.RenogyRegisterSwitch(\n        coordinator, device, switch_module.RIV_SWITCHES[2]\n    )\n\n    assert beep.is_on is False\n    assert output.is_on is False\n    assert lithium.is_on is True\n'''
+          )
+
+          test_ble = Path("tests/test_ble.py")
+          test_ble.write_text(
+              test_ble.read_text()
+              + '''\n\ndef test_riv_control_state_readback_decodes_confirmed_blocks() -> None:\n    """Readback should expose the captured RIV settings with correct scaling."""\n    ble_module = _load_ble_module()\n    coordinator = ble_module.RenogyActiveBluetoothCoordinator(\n        hass=MagicMock(),\n        logger=MagicMock(),\n        address="CC:45:A5:8A:7B:70",\n        scan_interval=30,\n        device_type="inverter",\n    )\n\n    device = MagicMock()\n    device.address = "CC:45:A5:8A:7B:70"\n    device.name = "BT-TH-A58A7B70"\n    device.device_type = "inverter"\n    device.parsed_data = {"model": "RIV1230PCH-23S"}\n    coordinator.device = device\n    coordinator.data = dict(device.parsed_data)\n\n    class Session:\n        def __init__(self) -> None:\n            self.lock = asyncio.Lock()\n            self.client = MagicMock()\n            self.client.read_gatt_char = AsyncMock(return_value=b"\\x00")\n            self.desynchronized = False\n\n    session = Session()\n\n    def response(values: list[int]) -> bytes:\n        payload = bytearray([0x20, 0x03, len(values) * 2])\n        for value in values:\n            payload.extend(value.to_bytes(2, "big"))\n        payload.extend(b"\\x00\\x00")\n        return bytes(payload)\n\n    responses = {\n        0x1005: response([1, 2]),\n        0x1146: response([800, 0, 14, 148, 138, 142, 132, 126, 120, 111]),\n        0x1159: response([1]),\n        0x1164: response([158, 148, 126, 2300, 0, 1]),\n    }\n\n    fake_client = MagicMock()\n    fake_client.transport_mode = "per_operation"\n    fake_client._prepare_session = AsyncMock(return_value=session)\n    fake_client._ensure_session_ready = AsyncMock()\n    fake_client._read_modbus_register = AsyncMock(\n        side_effect=lambda _session, **kwargs: responses[kwargs["register"]]\n    )\n    fake_client._close_session = AsyncMock()\n    coordinator._ble_client = fake_client\n\n    updates = asyncio.run(coordinator.async_read_riv_control_state())\n\n    assert updates == {\n        "inverter_beep": 1,\n        "inverter_output": 2,\n        "inverter_charge_current": 80.0,\n        "inverter_equalization_voltage": pytest.approx(14.8),\n        "inverter_boost_voltage": pytest.approx(13.8),\n        "inverter_float_voltage": pytest.approx(14.2),\n        "inverter_low_voltage_warn": pytest.approx(12.0),\n        "inverter_overdischarge_shutdown": pytest.approx(11.1),\n        "inverter_output_priority": 1,\n        "inverter_over_voltage": pytest.approx(15.8),\n        "inverter_overvoltage_recovery": pytest.approx(14.8),\n        "inverter_undervoltage_recovery": pytest.approx(12.6),\n        "inverter_lithium_activation": 1,\n    }\n    assert coordinator.data["inverter_output_priority"] == 1\n    assert device.parsed_data["inverter_output"] == 2\n    fake_client._close_session.assert_awaited_once()\n'''
+          )
+          PY
+
+          rm .github/workflows/apply-riv-state-readback.yml
+          git config user.name "danfulton72"
+          git config user.email "42965092+danfulton72@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: read RIV control state from inverter"
+          git push origin HEAD:fix/riv-control-state-readback
