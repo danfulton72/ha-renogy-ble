@@ -31,6 +31,19 @@ jobs:
             tests/test_hub_setup.py
           )
           uv run ruff check --fix "${files[@]}" || true
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/test_hub_import.py")
+          text = path.read_text()
+          text = text.replace(
+              'spec = importlib.util.spec_from_file_location("custom_components.renogy_ble.hub", hub_path)',
+              'spec = importlib.util.spec_from_file_location(\n'
+              '    "custom_components.renogy_ble.hub", hub_path\n'
+              ')',
+          )
+          path.write_text(text)
+          PY
           uv run ruff format "${files[@]}"
           uv run ruff check "${files[@]}"
       - name: Remove one-shot workflow
