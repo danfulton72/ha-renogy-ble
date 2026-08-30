@@ -134,8 +134,20 @@ def test_detect_device_type_from_model_identifies_dcc_chargers() -> None:
         ), model
 
 
+def test_detect_device_type_from_model_identifies_riv_inverters() -> None:
+    """RIV inverter models behind generic BT-TH modules map to inverter."""
+    device_name_module = _load_device_name_module()
+    const_module = importlib.import_module("custom_components.renogy.const")
+
+    for model in ("RIV1230PCH-23S", "riv1230pch-23s"):
+        assert (
+            device_name_module.detect_device_type_from_model(model)
+            == const_module.DeviceType.INVERTER.value
+        ), model
+
+
 def test_detect_device_type_from_model_ignores_other_models() -> None:
-    """Non-DCC or unusable model strings should not suggest a device type."""
+    """Unrecognized or unusable model strings should not suggest a device type."""
     device_name_module = _load_device_name_module()
 
     assert device_name_module.detect_device_type_from_model("RNG-CTRL-RVR40") is None
