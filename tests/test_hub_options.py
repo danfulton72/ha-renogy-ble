@@ -33,7 +33,7 @@ def _schema_fields(schema: Any) -> set[str]:
 def test_non_shunt_hub_option_defaults_to_disabled() -> None:
     """Existing non-shunt entries should show Hub polling disabled by default."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     handler = config_flow_module.RenogyOptionsFlowHandler(
         _entry(const_module, device_type=const_module.DeviceType.INVERTER.value)
     )
@@ -60,7 +60,7 @@ def test_non_shunt_hub_option_defaults_to_disabled() -> None:
 def test_non_shunt_hub_option_preserves_enabled_value() -> None:
     """The options form should preserve an already enabled Hub setting."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     handler = config_flow_module.RenogyOptionsFlowHandler(
         _entry(
             const_module,
@@ -93,7 +93,7 @@ def test_non_shunt_hub_option_preserves_enabled_value() -> None:
 def test_non_shunt_hub_option_submission_is_saved() -> None:
     """Submitting the Hub checkbox should save it with the connection mode."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     handler = config_flow_module.RenogyOptionsFlowHandler(
         _entry(const_module, device_type=const_module.DeviceType.INVERTER.value)
     )
@@ -114,7 +114,7 @@ def test_non_shunt_hub_option_submission_is_saved() -> None:
 def test_shunt_options_do_not_expose_hub_checkbox() -> None:
     """Smart Shunt entries should keep their existing options unchanged."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     handler = config_flow_module.RenogyOptionsFlowHandler(
         _entry(const_module, device_type=const_module.DeviceType.SHUNT300.value)
     )

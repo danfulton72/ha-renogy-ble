@@ -211,12 +211,12 @@ def _install_module_stubs() -> None:
 def _load_ble_module():
     """Load the BLE module with stubs in place."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.ble", None)
-    sys.modules.pop("custom_components.renogy", None)
+    sys.modules.pop("custom_components.renogy_ble.ble", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
 
     import importlib
 
-    return importlib.import_module("custom_components.renogy.ble")
+    return importlib.import_module("custom_components.renogy_ble.ble")
 
 
 class _GraceDevice:

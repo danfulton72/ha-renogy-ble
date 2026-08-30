@@ -22,12 +22,12 @@ def _load_hub_module() -> Any:
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy_ble"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble_ble"] = renogy_pkg
 
-    sys.modules.pop("custom_components.renogy_ble.hub", None)
-    return importlib.import_module("custom_components.renogy_ble.hub")
+    sys.modules.pop("custom_components.renogy_ble_ble.hub", None)
+    return importlib.import_module("custom_components.renogy_ble_ble.hub")
 
 
 hub_module = _load_hub_module()

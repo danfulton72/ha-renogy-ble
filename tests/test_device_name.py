@@ -13,19 +13,19 @@ def _load_device_name_module() -> Any:
     """Load device_name module without importing integration __init__."""
     repo_root = Path(__file__).resolve().parents[1]
     custom_components_path = str(repo_root / "custom_components")
-    renogy_path = str(repo_root / "custom_components" / "renogy")
+    renogy_path = str(repo_root / "custom_components" / "renogy_ble")
 
     custom_components_pkg = types.ModuleType("custom_components")
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
-    sys.modules.pop("custom_components.renogy.const", None)
-    sys.modules.pop("custom_components.renogy.device_name", None)
-    return importlib.import_module("custom_components.renogy.device_name")
+    sys.modules.pop("custom_components.renogy_ble.const", None)
+    sys.modules.pop("custom_components.renogy_ble.device_name", None)
+    return importlib.import_module("custom_components.renogy_ble.device_name")
 
 
 def test_supported_renogy_name_prefixes() -> None:
@@ -51,7 +51,7 @@ def test_supported_renogy_name_prefixes() -> None:
 def test_detect_device_type_from_ble_name() -> None:
     """Device type detection should infer shunt names and fallback otherwise."""
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     assert (
         device_name_module.detect_device_type_from_ble_name("RNGRIU123456")
@@ -94,7 +94,7 @@ def test_detect_device_type_from_ble_name() -> None:
 def test_is_device_name_ready_by_device_type() -> None:
     """Readiness should enforce prefix by configured device type."""
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     assert device_name_module.is_device_name_ready(
         "BT-TH-123456", const_module.DeviceType.CONTROLLER.value
@@ -125,7 +125,7 @@ def test_is_device_name_ready_by_device_type() -> None:
 def test_detect_device_type_from_model_identifies_dcc_chargers() -> None:
     """DC-DC charger model strings should map to the DCC device type."""
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     for model in ("DCC50S", "DCC30S", "RBC20D1U", "RBC50D1S-G6", "rbc30d1s"):
         assert (
@@ -137,7 +137,7 @@ def test_detect_device_type_from_model_identifies_dcc_chargers() -> None:
 def test_detect_device_type_from_model_identifies_riv_inverters() -> None:
     """RIV inverter models behind generic BT-TH modules map to inverter."""
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     for model in ("RIV1230PCH-23S", "riv1230pch-23s"):
         assert (
@@ -165,7 +165,7 @@ def test_btric_inverter_name_is_supported():
 
 def test_btric_inverter_type_detected():
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     assert (
         device_name_module.detect_device_type_from_ble_name("BTRIC130000029")
         == const_module.DeviceType.INVERTER.value
@@ -174,7 +174,7 @@ def test_btric_inverter_type_detected():
 
 def test_btric_inverter_name_ready():
     device_name_module = _load_device_name_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     assert device_name_module.is_device_name_ready(
         "BTRIC130000029", const_module.DeviceType.INVERTER.value
     )

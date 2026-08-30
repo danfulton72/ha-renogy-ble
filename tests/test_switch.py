@@ -119,7 +119,7 @@ def _install_module_stubs() -> None:
     const_module.Platform = Platform
     sys.modules["homeassistant.const"] = const_module
 
-    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy_ble.ble"))
 
     class RenogyActiveBluetoothCoordinator:
         """Stub coordinator class for testing."""
@@ -129,18 +129,18 @@ def _install_module_stubs() -> None:
 
     ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
     ble_module.RenogyBLEDevice = RenogyBLEDevice
-    sys.modules["custom_components.renogy.ble"] = ble_module
+    sys.modules["custom_components.renogy_ble.ble"] = ble_module
 
 
 def _load_switch_module():
     """Load the switch module with stubs in place."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.switch", None)
-    sys.modules.pop("custom_components.renogy", None)
+    sys.modules.pop("custom_components.renogy_ble.switch", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
 
     import importlib
 
-    return importlib.import_module("custom_components.renogy.switch")
+    return importlib.import_module("custom_components.renogy_ble.switch")
 
 
 def test_switch_setup_skips_non_controller() -> None:

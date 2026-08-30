@@ -17,7 +17,7 @@ def _load_init_module_with_hub_stub() -> tuple[Any, Any, Any]:
     base_coordinator_class = _install_module_stubs()
     assert base_coordinator_class is not None
 
-    hub_module = cast(Any, types.ModuleType("custom_components.renogy.hub_coordinator"))
+    hub_module = cast(Any, types.ModuleType("custom_components.renogy_ble.hub_coordinator"))
 
     class RenogyHubBluetoothCoordinator:
         """Stub Hub coordinator that records initialization arguments."""
@@ -41,11 +41,11 @@ def _load_init_module_with_hub_stub() -> tuple[Any, Any, Any]:
             """Support shutdown behavior."""
 
     hub_module.RenogyHubBluetoothCoordinator = RenogyHubBluetoothCoordinator
-    sys.modules["custom_components.renogy.hub_coordinator"] = hub_module
+    sys.modules["custom_components.renogy_ble.hub_coordinator"] = hub_module
 
-    sys.modules.pop("custom_components.renogy.__init__", None)
-    sys.modules.pop("custom_components.renogy", None)
-    module = importlib.import_module("custom_components.renogy")
+    sys.modules.pop("custom_components.renogy_ble.__init__", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
+    module = importlib.import_module("custom_components.renogy_ble")
     return module, base_coordinator_class, RenogyHubBluetoothCoordinator
 
 

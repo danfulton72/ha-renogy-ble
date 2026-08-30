@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock
 def _install_module_stubs(*, install_ble: bool = True) -> type | None:
     """Install minimal module stubs to import the integration module."""
     # Any focused test may have loaded integration constants through a synthetic
-    # custom_components.renogy package. Always force the production const module
+    # custom_components.renogy_ble package. Always force the production const module
     # to be imported afresh before loading the real integration package.
-    sys.modules.pop("custom_components.renogy.const", None)
+    sys.modules.pop("custom_components.renogy_ble.const", None)
 
     homeassistant_module = cast(Any, types.ModuleType("homeassistant"))
     sys.modules["homeassistant"] = homeassistant_module
@@ -57,10 +57,10 @@ def _install_module_stubs(*, install_ble: bool = True) -> type | None:
     sys.modules["homeassistant.helpers.device_registry"] = device_registry_module
 
     if not install_ble:
-        sys.modules.pop("custom_components.renogy.ble", None)
+        sys.modules.pop("custom_components.renogy_ble.ble", None)
         return None
 
-    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy_ble.ble"))
 
     class RenogyActiveBluetoothCoordinator:
         """Stub coordinator that records its initialization args."""
@@ -88,26 +88,26 @@ def _install_module_stubs(*, install_ble: bool = True) -> type | None:
 
     ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
     ble_module.RenogyBLEDevice = RenogyBLEDevice
-    sys.modules["custom_components.renogy.ble"] = ble_module
+    sys.modules["custom_components.renogy_ble.ble"] = ble_module
     return RenogyActiveBluetoothCoordinator
 
 
 def _load_init_module():
     """Load the integration module with stubs in place."""
     coordinator_class = _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.__init__", None)
-    sys.modules.pop("custom_components.renogy", None)
-    module = importlib.import_module("custom_components.renogy")
+    sys.modules.pop("custom_components.renogy_ble.__init__", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
+    module = importlib.import_module("custom_components.renogy_ble")
     return module, coordinator_class
 
 
 def test_init_module_imports_without_ble_dependency() -> None:
     """Ensure component import does not require manifest requirements yet."""
     _install_module_stubs(install_ble=False)
-    sys.modules.pop("custom_components.renogy.__init__", None)
-    sys.modules.pop("custom_components.renogy", None)
+    sys.modules.pop("custom_components.renogy_ble.__init__", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
 
-    module = importlib.import_module("custom_components.renogy")
+    module = importlib.import_module("custom_components.renogy_ble")
 
     assert module.DOMAIN == "renogy"
 

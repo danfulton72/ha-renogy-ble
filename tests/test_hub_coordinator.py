@@ -16,17 +16,17 @@ def _load_hub_coordinator_module() -> Any:
     """Load hub_coordinator.py with isolated integration dependencies."""
     repo_root = Path(__file__).resolve().parents[1]
     custom_components_path = str(repo_root / "custom_components")
-    renogy_path = str(repo_root / "custom_components" / "renogy")
+    renogy_path = str(repo_root / "custom_components" / "renogy_ble")
 
     custom_components_pkg = types.ModuleType("custom_components")
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
-    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy_ble.ble"))
 
     class RenogyBLEDevice:
         """Minimal logical BLE device used by coordinator tests."""
@@ -52,9 +52,9 @@ def _load_hub_coordinator_module() -> Any:
 
     ble_module.RenogyBLEDevice = RenogyBLEDevice
     ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
-    sys.modules["custom_components.renogy.ble"] = ble_module
+    sys.modules["custom_components.renogy_ble.ble"] = ble_module
 
-    hub_module = cast(Any, types.ModuleType("custom_components.renogy.hub"))
+    hub_module = cast(Any, types.ModuleType("custom_components.renogy_ble.hub"))
 
     class RenogyHubBatteryState:
         """Minimal cached Hub state placeholder."""
@@ -67,10 +67,10 @@ def _load_hub_coordinator_module() -> Any:
 
     hub_module.RenogyHubBatteryState = RenogyHubBatteryState
     hub_module.RenogyHubBatteryManager = RenogyHubBatteryManager
-    sys.modules["custom_components.renogy.hub"] = hub_module
+    sys.modules["custom_components.renogy_ble.hub"] = hub_module
 
-    sys.modules.pop("custom_components.renogy.hub_coordinator", None)
-    return importlib.import_module("custom_components.renogy.hub_coordinator")
+    sys.modules.pop("custom_components.renogy_ble.hub_coordinator", None)
+    return importlib.import_module("custom_components.renogy_ble.hub_coordinator")
 
 
 class _FakeHubManager:
