@@ -1,0 +1,51 @@
+name: Apply RIV external feedback fix
+
+on:
+  push:
+    branches: [fix/riv-external-control-feedback]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'ci: stage RIV external feedback fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/riv-external-control-feedback
+      - name: Apply feedback-loop fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          ble_path = Path('custom_components/renogy_ble/ble.py')
+          source = ble_path.read_text()
+
+          old = '''        try:\n            await self._async_poll_device(service_info)\n        except Exception as err:\n            error_traceback = traceback.format_exc()\n            self.logger.debug(\n                "Error refreshing device %s: %s\\n%s",\n                self.address,\n                str(err),\n                error_traceback,\n            )\n            self._record_poll_availability(False, err)\n\n        self.async_update_listeners()\n'''
+          new = '''        try:\n            await self._async_poll_device(service_info)\n        except Exception as err:\n            error_traceback = traceback.format_exc()\n            self.logger.debug(\n                "Error refreshing device %s: %s\\n%s",\n                self.address,\n                str(err),\n                error_traceback,\n            )\n            self._record_poll_availability(False, err)\n            self.async_update_listeners()\n'''
+          if old not in source:
+              raise SystemExit('async_request_refresh target not found')
+          source = source.replace(old, new, 1)
+
+          old = '''            # Update all listeners after successful data acquisition\n            return dict(self.device.parsed_data)\n\n        else:\n            failed_address = (\n                service_info.address if service_info is not None else self.address\n            )\n            self.logger.info("Failed to retrieve data from %s", failed_address)\n            return self.data if isinstance(self.data, dict) else {}\n'''
+          new = '''            # Bluetooth-driven polls call this method directly, bypassing\n            # async_request_refresh(). Notify our custom entity listeners here so\n            # physical inverter changes are pushed into Home Assistant.\n            self.async_update_listeners()\n            return dict(self.device.parsed_data)\n\n        else:\n            failed_address = (\n                service_info.address if service_info is not None else self.address\n            )\n            self.logger.info("Failed to retrieve data from %s", failed_address)\n            # Availability changes from direct Bluetooth polls also need to reach\n            # entities; async_request_refresh() is not necessarily involved.\n            self.async_update_listeners()\n            return self.data if isinstance(self.data, dict) else {}\n'''
+          if old not in source:
+              raise SystemExit('_async_poll_device target not found')
+          ble_path.write_text(source.replace(old, new, 1))
+
+          test_path = Path('tests/test_ble.py')
+          tests = test_path.read_text()
+          marker = '''\ndef test_sustained_shunt_refresh_does_not_poll():\n'''
+          addition = '''\ndef test_direct_poll_notifies_entities_after_external_control_change():\n    """Bluetooth-driven polls must publish physical inverter state changes."""\n    ble_module = _load_ble_module()\n    coordinator = ble_module.RenogyActiveBluetoothCoordinator(\n        hass=MagicMock(),\n        logger=MagicMock(),\n        address="AA:BB:CC:DD:EE:FF",\n        scan_interval=30,\n        device_type="inverter",\n    )\n    service_info = ble_module.BluetoothServiceInfoBleak(\n        address="AA:BB:CC:DD:EE:FF",\n        name="BT-TH-12345",\n        rssi=-60,\n    )\n    coordinator._update_device_from_service_info(service_info)\n    coordinator.device.parsed_data = {\n        "model": "RIV1230PCH-23S",\n        "inverter_output": 0,\n    }\n    coordinator.data = dict(coordinator.device.parsed_data)\n\n    async def read_external_change(_service_info):\n        coordinator.device.parsed_data["inverter_output"] = 1\n        coordinator.data = dict(coordinator.device.parsed_data)\n        return True\n\n    coordinator._read_device_data = AsyncMock(side_effect=read_external_change)\n    listener = MagicMock()\n    coordinator.async_add_listener(listener)\n\n    result = asyncio.run(coordinator._async_poll_device(service_info))\n\n    assert result["inverter_output"] == 1\n    listener.assert_called_once_with()\n\n\ndef test_manual_refresh_does_not_double_notify_after_successful_poll():\n    """Manual refresh should publish one entity update, not two."""\n    ble_module = _load_ble_module()\n    coordinator = ble_module.RenogyActiveBluetoothCoordinator(\n        hass=MagicMock(),\n        logger=MagicMock(),\n        address="AA:BB:CC:DD:EE:FF",\n        scan_interval=30,\n        device_type="controller",\n    )\n    service_info = ble_module.BluetoothServiceInfoBleak(\n        address="AA:BB:CC:DD:EE:FF",\n        name="BT-TH-12345",\n        rssi=-60,\n    )\n    coordinator._update_device_from_service_info(service_info)\n    coordinator.device.parsed_data = {"battery_voltage": 14.2}\n    coordinator._ble_client.read_device = AsyncMock(\n        return_value=MagicMock(success=True, error=None)\n    )\n    ble_module.bluetooth.async_last_service_info.return_value = service_info\n    listener = MagicMock()\n    coordinator.async_add_listener(listener)\n\n    asyncio.run(coordinator.async_request_refresh())\n\n    listener.assert_called_once_with()\n\n'''
+          if marker not in tests:
+              raise SystemExit('test insertion point not found')
+          test_path.write_text(tests.replace(marker, addition + marker, 1))
+      - name: Commit fix
+        run: |
+          git config user.name "danfulton72"
+          git config user.email "42965092+danfulton72@users.noreply.github.com"
+          git add custom_components/renogy_ble/ble.py tests/test_ble.py
+          git commit -m "fix: publish external RIV control changes"
+          git push
