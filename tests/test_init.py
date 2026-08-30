@@ -109,7 +109,7 @@ def test_init_module_imports_without_ble_dependency() -> None:
 
     module = importlib.import_module("custom_components.renogy_ble")
 
-    assert module.DOMAIN == "renogy"
+    assert module.DOMAIN == "renogy_ble"
 
 
 def test_shunt_connection_mode_defaults_to_sustained() -> None:

@@ -205,7 +205,7 @@ def test_manifest_registers_rngpro_bluetooth_discovery() -> None:
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "custom_components"
-        / "renogy"
+        / "renogy_ble"
         / "manifest.json"
     )
     manifest = json.loads(manifest_path.read_text())
@@ -639,7 +639,7 @@ def test_options_flow_accepts_and_stores_valid_input() -> None:
 def test_runtime_options_have_user_facing_labels(filename: str) -> None:
     """Every runtime option should have a canonical English label."""
     integration_path = (
-        Path(__file__).resolve().parents[1] / "custom_components" / "renogy"
+        Path(__file__).resolve().parents[1] / "custom_components" / "renogy_ble"
     )
     labels = json.loads((integration_path / filename).read_text())["options"]["step"][
         "init"

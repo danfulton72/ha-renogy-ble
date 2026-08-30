@@ -15,6 +15,7 @@ from .availability import is_entity_available
 from .ble import RenogyActiveBluetoothCoordinator, RenogyBLEDevice
 from .const import (
     ATTR_MANUFACTURER,
+    CONF_DEVICE_TYPE,
     DCC_BATTERY_TYPE_VALUES,
     DCC_BATTERY_TYPES,
     DCC_MAX_CURRENT_OPTIONS,
@@ -74,7 +75,12 @@ async def async_setup_entry(
 
     renogy_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = renogy_data["coordinator"]
-    device_type = coordinator.device_type
+    configured_device_type = config_entry.data.get(
+        CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE
+    )
+    device_type = getattr(coordinator, "device_type", configured_device_type)
+    if not isinstance(device_type, str):
+        device_type = configured_device_type
 
     if device_type == DeviceType.INVERTER.value:
         if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):

@@ -132,8 +132,8 @@ def test_hub_option_has_user_facing_label() -> None:
     expected = "Communication Hub / multiple batteries"
 
     for relative_path in (
-        "custom_components/renogy/strings.json",
-        "custom_components/renogy/translations/en.json",
+        "custom_components/renogy_ble/strings.json",
+        "custom_components/renogy_ble/translations/en.json",
     ):
         strings = json.loads((repo_root / relative_path).read_text())
         assert (

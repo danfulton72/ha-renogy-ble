@@ -10,7 +10,7 @@ from pathlib import Path
 def test_real_hub_module_imports_in_clean_interpreter() -> None:
     """Load the production Hub module without package or test-module stubs."""
     repo_root = Path(__file__).resolve().parents[1]
-    hub_path = repo_root / "custom_components" / "renogy" / "hub.py"
+    hub_path = repo_root / "custom_components" / "renogy_ble" / "hub.py"
     script = f"""
 import importlib.util
 import sys

@@ -150,10 +150,11 @@ async def _async_reconcile_model_device_type(
     coordinator: RenogyActiveBluetoothCoordinator,
 ) -> None:
     """Resolve a generic BLE entry to the product type reported by its model."""
-    if not isinstance(coordinator.data, dict):
+    data = getattr(coordinator, "data", None)
+    if not isinstance(data, dict):
         return
 
-    model = coordinator.data.get("model")
+    model = data.get("model")
     detected_type = detect_device_type_from_model(model)
     if detected_type is None or detected_type == coordinator.device_type:
         return

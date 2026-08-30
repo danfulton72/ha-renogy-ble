@@ -296,7 +296,7 @@ def test_hub_battery_0x33_is_child_device_with_validated_values() -> None:
     assert voltage.available is True
     assert voltage._attr_unique_id == "F0:F8:F2:57:47:0D:hub:33_battery_voltage"
     assert voltage._attr_device_info["identifiers"] == {
-        ("renogy", "F0:F8:F2:57:47:0D:hub:33")
+        ("renogy_ble", "F0:F8:F2:57:47:0D:hub:33")
     }
     assert voltage._attr_device_info["via_device"] == (
         "renogy",
