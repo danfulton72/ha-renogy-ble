@@ -27,7 +27,9 @@ renogy_pkg = types.ModuleType("custom_components.renogy_ble")
 renogy_pkg.__path__ = [str(hub_path.parent)]
 sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
-spec = importlib.util.spec_from_file_location("custom_components.renogy_ble.hub", hub_path)
+spec = importlib.util.spec_from_file_location(
+    "custom_components.renogy_ble.hub", hub_path
+)
 assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module

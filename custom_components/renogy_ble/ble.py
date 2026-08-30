@@ -27,6 +27,7 @@ from homeassistant.components.bluetooth.active_update_coordinator import (
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
+
 from renogy_ble import ble as renogy_ble_module
 from renogy_ble.ble import (
     INVERTER_DEVICE_ID,

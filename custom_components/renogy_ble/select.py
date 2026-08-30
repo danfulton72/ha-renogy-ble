@@ -83,7 +83,11 @@ async def async_setup_entry(
         device_type = configured_device_type
 
     if device_type == DeviceType.INVERTER.value:
-        if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+        if (
+            _coordinator_model(coordinator)
+            .upper()
+            .startswith(RIV_INVERTER_MODEL_PREFIX)
+        ):
             async_add_entities(
                 [RenogyOutputPrioritySelect(coordinator, coordinator.device)]
             )
@@ -197,7 +201,11 @@ class RenogyBatteryTypeSelect(SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         type_key = next(
-            (key for key, display in BATTERY_TYPE_DISPLAY_NAMES.items() if display == option),
+            (
+                key
+                for key, display in BATTERY_TYPE_DISPLAY_NAMES.items()
+                if display == option
+            ),
             None,
         )
         if type_key is None:
@@ -292,7 +300,7 @@ class RenogyMaxCurrentSelect(SelectEntity):
                 display = f"{current_int}A"
                 self._attr_current_option = display
                 return display
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
         return None
 

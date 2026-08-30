@@ -99,7 +99,11 @@ async def async_setup_entry(
     LOGGER.debug("Setting up switches for resolved device type: %s", device_type)
 
     if device_type == DeviceType.INVERTER.value:
-        if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+        if (
+            _coordinator_model(coordinator)
+            .upper()
+            .startswith(RIV_INVERTER_MODEL_PREFIX)
+        ):
             async_add_entities(
                 [
                     RenogyRegisterSwitch(coordinator, coordinator.device, description)
