@@ -6,7 +6,7 @@
 [![Release](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/release.yml/badge.svg)](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/danfulton72/ha-renogy-ble)](https://github.com/danfulton72/ha-renogy-ble/releases/latest)
 
-**Renogy BLE** is a custom Home Assistant integration for monitoring and controlling supported Renogy devices over Bluetooth Low Energy (BLE). The Home Assistant integration domain remains `renogy` for compatibility with existing installations.
+**Renogy BLE** is a custom Home Assistant integration for monitoring and controlling supported Renogy devices over Bluetooth Low Energy (BLE). Its Home Assistant domain is `renogy_ble` and HACS installs it into `custom_components/renogy_ble`.
 
 Charge controllers and DCC chargers use BT-1 or BT-2 modules. Supported batteries, inverters, and Smart Shunt 300 devices advertise directly over BLE.
 
@@ -59,9 +59,11 @@ Until this repository is included in the HACS default catalog, add it as a custo
 5. Restart Home Assistant.
 6. Go to **Settings > Devices & services > Add Integration**, search for **Renogy BLE**, and complete setup.
 
+HACS installs the integration as `custom_components/renogy_ble`.
+
 ## Manual Installation
 
-Copy `custom_components/renogy` into your Home Assistant configuration directory as `custom_components/renogy`, restart Home Assistant, then add **Renogy BLE** from **Settings > Devices & services**.
+Copy `custom_components/renogy_ble` from this repository into your Home Assistant configuration directory as `custom_components/renogy_ble`, restart Home Assistant, then add **Renogy BLE** from **Settings > Devices & services**.
 
 ## Configuration
 
@@ -81,7 +83,7 @@ Depending on the device, Renogy BLE exposes battery voltage/current/power/temper
 
 ### Enable Debug Logging
 
-1. Open the [Renogy BLE integration](https://my.home-assistant.io/redirect/integration/?domain=renogy).
+1. Open the [Renogy BLE integration](https://my.home-assistant.io/redirect/integration/?domain=renogy_ble).
 2. Select **Enable debug logging**.
 3. Reproduce the issue.
 4. Download or copy the relevant Home Assistant logs.
@@ -96,9 +98,9 @@ Depending on the device, Renogy BLE exposes battery voltage/current/power/temper
 
 ## Releases and Versioning
 
-GitHub releases are the authoritative version source for this repository. Every commit pushed to `main` is released automatically using the next patch SemVer tag (`vX.Y.Z`). The release workflow synchronizes that GitHub version into `custom_components/renogy/manifest.json` before creating the tag and GitHub release. HACS therefore sees the GitHub release version and the Home Assistant manifest version in sync.
+GitHub releases are the authoritative version source for this repository. Every non-release commit pushed to `main` is released automatically using the next patch SemVer tag (`vX.Y.Z`). Before the tag and GitHub release are created, the release workflow synchronizes that version into `custom_components/renogy_ble/manifest.json` and commits the version update to `main`.
 
-The initial detached repository starts at `v0.9.0`; subsequent `main` commits advance the patch version automatically.
+The initial detached repository starts at `v0.9.0`; subsequent `main` commits advance the patch version automatically. HACS therefore sees the same version in the GitHub release and Home Assistant manifest.
 
 ## Development
 

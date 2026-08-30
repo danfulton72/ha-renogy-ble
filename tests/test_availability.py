@@ -11,9 +11,12 @@ import pytest
 def _load_availability_module() -> ModuleType:
     """Load the standalone helper without importing the integration package."""
     path = (
-        Path(__file__).parents[1] / "custom_components" / "renogy" / "availability.py"
+        Path(__file__).parents[1]
+        / "custom_components"
+        / "renogy_ble"
+        / "availability.py"
     )
-    spec = importlib.util.spec_from_file_location("renogy_availability", path)
+    spec = importlib.util.spec_from_file_location("renogy_ble_availability", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

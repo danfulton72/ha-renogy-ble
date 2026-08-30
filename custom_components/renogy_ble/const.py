@@ -3,7 +3,7 @@
 import logging
 from enum import Enum
 
-DOMAIN = "renogy"
+DOMAIN = "renogy_ble"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -115,9 +115,9 @@ class DCCRegister:
     SOLAR_CUTOFF_CURRENT = 0xE038
 
 
-# REGO-series inverter setting registers (for write operations)
+# REGO-series inverter setting registers (function 0x06, value x10).
 class InverterRegister:
-    """Modbus registers for REGO-series inverter settings (function 0x06, value x10)."""
+    """Modbus registers for REGO-series inverter settings."""
 
     CHARGE_CURRENT = 0x1146
     LOW_VOLTAGE_WARN = 0x114E

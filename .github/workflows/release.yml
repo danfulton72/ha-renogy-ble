@@ -38,7 +38,7 @@ jobs:
 
           latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
 
-          # A rerun of a commit that is already contained in the latest release is a no-op.
+          # A rerun of a commit already contained in the latest release is a no-op.
           if [[ -n "${latest_tag}" ]] && git merge-base --is-ancestor HEAD "${latest_tag}"; then
             echo "already_released=true" >> "${GITHUB_OUTPUT}"
             echo "tag=${latest_tag}" >> "${GITHUB_OUTPUT}"
@@ -46,12 +46,12 @@ jobs:
           fi
 
           if [[ -z "${latest_tag}" ]]; then
-            # Bootstrap the independent repository from the imported manifest version.
+            # Bootstrap from the imported custom-integration manifest version.
             version="$(python - <<'PY'
           import json
           from pathlib import Path
 
-          manifest = json.loads(Path('custom_components/renogy/manifest.json').read_text())
+          manifest = json.loads(Path('custom_components/renogy_ble/manifest.json').read_text())
           print(manifest['version'])
           PY
           )"
@@ -79,7 +79,7 @@ jobs:
           import os
           from pathlib import Path
 
-          path = Path('custom_components/renogy/manifest.json')
+          path = Path('custom_components/renogy_ble/manifest.json')
           manifest = json.loads(path.read_text())
           manifest['version'] = os.environ['VERSION']
           path.write_text(json.dumps(manifest, indent=2) + '\n')
@@ -91,11 +91,11 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- custom_components/renogy/manifest.json; then
+          if git diff --quiet -- custom_components/renogy_ble/manifest.json; then
             exit 0
           fi
 
-          git add custom_components/renogy/manifest.json
+          git add custom_components/renogy_ble/manifest.json
           git commit -m "chore(release): ${TAG}"
           git push origin HEAD:main
 

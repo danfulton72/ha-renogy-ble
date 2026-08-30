@@ -1,5 +1,5 @@
 {
-  "domain": "renogy",
+  "domain": "renogy_ble",
   "name": "Renogy BLE",
   "bluetooth": [
     {
@@ -35,6 +35,7 @@
     "bluetooth_adapters"
   ],
   "documentation": "https://github.com/danfulton72/ha-renogy-ble",
+  "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/danfulton72/ha-renogy-ble/issues",
   "requirements": [

@@ -1,6 +1,6 @@
 # Background
 
-ha-renogy-ble is the Renogy BLE custom integration for Home Assistant, written in Python and distributed through HACS. It connects Home Assistant to supported Renogy devices over Bluetooth Low Energy. The Home Assistant integration domain is `renogy` and is intentionally stable for compatibility.
+ha-renogy-ble is the Renogy BLE custom integration for Home Assistant, written in Python and distributed through HACS. It connects Home Assistant to supported Renogy devices over Bluetooth Low Energy. The Home Assistant integration domain is `renogy_ble` and the integration is installed at `custom_components/renogy_ble`.
 
 The integration depends on the `renogy-ble` Python library for BLE transport, Modbus command construction, and response parsing. This repository is the Home Assistant glue layer.
 
@@ -29,8 +29,8 @@ The integration depends on the `renogy-ble` Python library for BLE transport, Mo
 # Releases
 
 - GitHub releases are the authoritative version source.
-- Every commit pushed to `main` is released as the next patch SemVer version.
-- CI synchronizes the release version into `custom_components/renogy/manifest.json`.
+- Every non-release commit pushed to `main` is released as the next patch SemVer version.
+- CI synchronizes the release version into `custom_components/renogy_ble/manifest.json`.
 - Do not manually bump the manifest version as part of normal feature/fix commits.
 
 # Commits
