@@ -270,3 +270,38 @@ def test_switch_updates_metadata_when_coordinator_name_resolves() -> None:
     assert entity._attr_device_info["name"] == "BT-TH-12345"
     assert entity._attr_device_info["model"] == "Rover 40A"
     entity.async_write_ha_state.assert_called_once()
+
+
+def test_riv_switch_state_comes_from_register_readback() -> None:
+    """RIV switch state should be known before Home Assistant writes anything."""
+    switch_module = _load_switch_module()
+    device = MagicMock()
+    device.name = "BT-TH-A58A7B70"
+    device.address = "CC:45:A5:8A:7B:70"
+    device.parsed_data = {
+        "model": "RIV1230PCH-23S",
+        "inverter_beep": 1,
+        "inverter_output": 2,
+        "inverter_lithium_activation": 1,
+    }
+    device.is_available = True
+
+    coordinator = MagicMock()
+    coordinator.device = device
+    coordinator.address = device.address
+    coordinator.data = dict(device.parsed_data)
+    coordinator.last_update_success = True
+
+    beep = switch_module.RenogyRegisterSwitch(
+        coordinator, device, switch_module.RIV_SWITCHES[0]
+    )
+    output = switch_module.RenogyRegisterSwitch(
+        coordinator, device, switch_module.RIV_SWITCHES[1]
+    )
+    lithium = switch_module.RenogyRegisterSwitch(
+        coordinator, device, switch_module.RIV_SWITCHES[2]
+    )
+
+    assert beep.is_on is False
+    assert output.is_on is False
+    assert lithium.is_on is True

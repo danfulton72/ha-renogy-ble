@@ -362,7 +362,33 @@ class RenogyOutputPrioritySelect(SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        return self._attr_current_option
+        if self._attr_current_option is not None:
+            return self._attr_current_option
+        data = None
+        if self._device and self._device.parsed_data:
+            data = self._device.parsed_data
+        elif isinstance(self.coordinator.data, dict):
+            data = self.coordinator.data
+        if not data:
+            return None
+        raw_value = data.get("inverter_output_priority")
+        if not isinstance(raw_value, int):
+            return None
+        return next(
+            (option for option, value in self._VALUES.items() if value == raw_value),
+            None,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        self._attr_current_option = None
+        if not self._device and self.coordinator.device:
+            self._device = self.coordinator.device
+        self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
         value = self._VALUES[option]

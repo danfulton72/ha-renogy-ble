@@ -298,6 +298,44 @@ class RenogyRegisterSwitch(SwitchEntity):
         """Return whether the inverter switch is available."""
         return is_entity_available(self.coordinator, self._device)
 
+    def _current_register_value(self) -> int | None:
+        """Return the latest raw register value from coordinator data."""
+        data = None
+        if self._device and self._device.parsed_data:
+            data = self._device.parsed_data
+        elif isinstance(self.coordinator.data, dict):
+            data = self.coordinator.data
+        if not data:
+            return None
+        value = data.get(self.entity_description.key)
+        return value if isinstance(value, int) else None
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the inverter switch state read back from the device."""
+        if self._attr_is_on is not None:
+            return self._attr_is_on
+        value = self._current_register_value()
+        if value == self.entity_description.on_value:
+            return True
+        if value == self.entity_description.off_value:
+            return False
+        return None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to coordinator updates for register readback changes."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Refresh state from the latest register readback."""
+        self._attr_is_on = None
+        if not self._device and self.coordinator.device:
+            self._device = self.coordinator.device
+        self.async_write_ha_state()
+
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Write the captured register value for ON."""
         await self._async_write_state(True)
