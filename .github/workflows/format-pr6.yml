@@ -30,7 +30,7 @@ jobs:
             tests/test_hub_import.py
             tests/test_hub_setup.py
           )
-          uv run ruff check --fix "${files[@]}"
+          uv run ruff check --fix "${files[@]}" || true
           uv run ruff format "${files[@]}"
           uv run ruff check "${files[@]}"
       - name: Remove one-shot workflow
