@@ -1371,3 +1371,77 @@ def test_model_mismatch_silent_when_type_matches_or_model_unknown():
     logger.warning.reset_mock()
     coordinator._warn_if_model_mismatch()
     logger.warning.assert_not_called()
+
+
+def test_riv_control_state_readback_decodes_confirmed_blocks() -> None:
+    """Readback should expose the captured RIV settings with correct scaling."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="CC:45:A5:8A:7B:70",
+        scan_interval=30,
+        device_type="inverter",
+    )
+
+    device = MagicMock()
+    device.address = "CC:45:A5:8A:7B:70"
+    device.name = "BT-TH-A58A7B70"
+    device.device_type = "inverter"
+    device.parsed_data = {"model": "RIV1230PCH-23S"}
+    coordinator.device = device
+    coordinator.data = dict(device.parsed_data)
+
+    class Session:
+        def __init__(self) -> None:
+            self.lock = asyncio.Lock()
+            self.client = MagicMock()
+            self.client.read_gatt_char = AsyncMock(return_value=b"\x00")
+            self.desynchronized = False
+
+    session = Session()
+
+    def response(values: list[int]) -> bytes:
+        payload = bytearray([0x20, 0x03, len(values) * 2])
+        for value in values:
+            payload.extend(value.to_bytes(2, "big"))
+        payload.extend(b"\x00\x00")
+        return bytes(payload)
+
+    responses = {
+        0x1005: response([1, 2]),
+        0x1146: response([800, 0, 14, 148, 138, 142, 132, 126, 120, 111]),
+        0x1159: response([1]),
+        0x1164: response([158, 148, 126, 2300, 0, 1]),
+    }
+
+    fake_client = MagicMock()
+    fake_client.transport_mode = "per_operation"
+    fake_client._prepare_session = AsyncMock(return_value=session)
+    fake_client._ensure_session_ready = AsyncMock()
+    fake_client._read_modbus_register = AsyncMock(
+        side_effect=lambda _session, **kwargs: responses[kwargs["register"]]
+    )
+    fake_client._close_session = AsyncMock()
+    coordinator._ble_client = fake_client
+
+    updates = asyncio.run(coordinator.async_read_riv_control_state())
+
+    assert updates == {
+        "inverter_beep": 1,
+        "inverter_output": 2,
+        "inverter_charge_current": 80.0,
+        "inverter_equalization_voltage": pytest.approx(14.8),
+        "inverter_boost_voltage": pytest.approx(13.8),
+        "inverter_float_voltage": pytest.approx(14.2),
+        "inverter_low_voltage_warn": pytest.approx(12.0),
+        "inverter_overdischarge_shutdown": pytest.approx(11.1),
+        "inverter_output_priority": 1,
+        "inverter_over_voltage": pytest.approx(15.8),
+        "inverter_overvoltage_recovery": pytest.approx(14.8),
+        "inverter_undervoltage_recovery": pytest.approx(12.6),
+        "inverter_lithium_activation": 1,
+    }
+    assert coordinator.data["inverter_output_priority"] == 1
+    assert device.parsed_data["inverter_output"] == 2
+    fake_client._close_session.assert_awaited_once()

@@ -131,7 +131,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # BT-TH is a generic radio module used by several product families. Once the
     # product model is known, prefer that model-derived type and rebuild the BLE
     # client so inverter writes use the inverter Modbus device ID (0x20).
-    await _async_reconcile_model_device_type(coordinator)
+    model_type_changed = await _async_reconcile_model_device_type(coordinator)
+    if model_type_changed and coordinator.device_type == DeviceType.INVERTER.value:
+        # Populate RIV switch/select/number state before entity platforms are set up,
+        # so Home Assistant does not initially render the controls as unknown.
+        try:
+            await coordinator.async_read_riv_control_state()
+        except Exception as err:  # noqa: BLE001
+            LOGGER.debug(
+                "Initial RIV control-state read failed for %s: %s",
+                device_address,
+                err,
+            )
 
     LOGGER.info("Starting coordinator for Renogy BLE device %s", device_address)
     try:
@@ -148,16 +159,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_reconcile_model_device_type(
     coordinator: RenogyActiveBluetoothCoordinator,
-) -> None:
-    """Resolve a generic BLE entry to the product type reported by its model."""
+) -> bool:
+    """Resolve a generic BLE entry to the reported product type; return if changed."""
     data = getattr(coordinator, "data", None)
     if not isinstance(data, dict):
-        return
+        return False
 
     model = data.get("model")
     detected_type = detect_device_type_from_model(model)
     if detected_type is None or detected_type == coordinator.device_type:
-        return
+        return False
 
     previous_type = coordinator.device_type
     LOGGER.info(
@@ -185,6 +196,7 @@ async def _async_reconcile_model_device_type(
     if coordinator.device is not None:
         coordinator.device.device_type = detected_type
     coordinator._ble_client = coordinator._build_ble_client_for_type(detected_type)
+    return True
 
 
 def _resolve_setting(entry: ConfigEntry, key: str, default: int) -> int:

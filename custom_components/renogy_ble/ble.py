@@ -43,7 +43,9 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SHUNT_CONNECTION_MODE,
     DEFAULT_UNAVAILABLE_RETRY_INTERVAL,
+    RIV_INVERTER_MODEL_PREFIX,
     DeviceType,
+    InverterRegister,
     NonShuntConnectionMode,
     ShuntConnectionMode,
 )
@@ -93,6 +95,61 @@ else:
     shunt_notify_char_uuid = "0000c411-0000-1000-8000-00805f9b34fb"
 
 LOAD_CONTROL_REGISTER = getattr(renogy_ble_module, "LOAD_CONTROL_REGISTER", 0x010A)
+RIV_INVERTER_INIT_CHAR_UUID = getattr(
+    renogy_ble_module,
+    "INVERTER_INIT_CHAR_UUID",
+    "0000ffd4-0000-1000-8000-00805f9b34fb",
+)
+RIV_INVERTER_INIT_DELAY = float(
+    getattr(renogy_ble_module, "INVERTER_INIT_DELAY", 1.0)
+)
+RIV_INVERTER_INTER_COMMAND_DELAY = float(
+    getattr(renogy_ble_module, "INVERTER_INTER_COMMAND_DELAY", 0.3)
+)
+RIV_INVERTER_COMMAND_TIMEOUT = float(
+    getattr(renogy_ble_module, "INVERTER_COMMAND_TIMEOUT", 10.0)
+)
+
+# Confirmed RIV1230PCH-23S settings read back from the same Modbus register
+# blocks observed in the Renogy app HCI capture. Each field tuple is
+# (coordinator key, word offset, scale). Unmapped words are intentionally ignored.
+RIV_CONTROL_READ_SPECS: tuple[
+    tuple[int, int, tuple[tuple[str, int, float], ...]], ...
+] = (
+    (
+        InverterRegister.BEEP,
+        2,
+        (("inverter_beep", 0, 1.0), ("inverter_output", 1, 1.0)),
+    ),
+    (
+        InverterRegister.CHARGE_CURRENT,
+        10,
+        (
+            ("inverter_charge_current", 0, 0.1),
+            ("inverter_equalization_voltage", 3, 0.1),
+            ("inverter_boost_voltage", 4, 0.1),
+            ("inverter_float_voltage", 5, 0.1),
+            ("inverter_low_voltage_warn", 8, 0.1),
+            ("inverter_overdischarge_shutdown", 9, 0.1),
+        ),
+    ),
+    (
+        InverterRegister.OUTPUT_PRIORITY,
+        1,
+        (("inverter_output_priority", 0, 1.0),),
+    ),
+    (
+        InverterRegister.BATTERY_OVER_VOLTAGE,
+        6,
+        (
+            ("inverter_over_voltage", 0, 0.1),
+            ("inverter_overvoltage_recovery", 1, 0.1),
+            ("inverter_undervoltage_recovery", 2, 0.1),
+            ("inverter_lithium_activation", 5, 1.0),
+        ),
+    ),
+)
+
 SHUNT_RECONNECT_DELAY_SECONDS = 10
 SHUNT_FORCE_UPDATE_INTERVAL_SECONDS = 300
 SHUNT_DISCONNECT_TIMEOUT_SECONDS = 5.0
@@ -963,8 +1020,11 @@ class RenogyActiveBluetoothCoordinator(
                 # Keep entities available until the configured failure threshold.
                 self._record_poll_availability(success, error)
 
-                # Update coordinator data if successful
+                # Read the writable RIV settings as part of every successful
+                # inverter poll. The upstream library currently reads telemetry and a
+                # subset of setpoints, but not the switch/select state registers.
                 if success and device.parsed_data:
+                    await self.async_read_riv_control_state()
                     self.data = dict(device.parsed_data)
                     self.logger.debug("Updated coordinator data: %s", self.data)
                     self._warn_if_model_mismatch()
@@ -972,6 +1032,142 @@ class RenogyActiveBluetoothCoordinator(
                 return success
             finally:
                 self._connection_in_progress = False
+
+    @staticmethod
+    def _decode_modbus_words(response: bytes, word_count: int) -> list[int] | None:
+        """Decode words from a validated Modbus 0x03 response."""
+        if len(response) < 5 or response[1] != 0x03:
+            return None
+        byte_count = response[2]
+        expected_bytes = word_count * 2
+        if byte_count < expected_bytes or len(response) < 3 + byte_count + 2:
+            return None
+        return [
+            int.from_bytes(response[3 + index : 5 + index], "big")
+            for index in range(0, expected_bytes, 2)
+        ]
+
+    async def async_read_riv_control_state(self) -> dict[str, int | float]:
+        """Read confirmed RIV writable settings and merge them into coordinator data."""
+        device = self.device
+        if device is None or self.device_type != DeviceType.INVERTER.value:
+            return {}
+
+        model = str(device.parsed_data.get("model", "")).upper()
+        if not model.startswith(RIV_INVERTER_MODEL_PREFIX):
+            return {}
+
+        prepare_session = getattr(self._ble_client, "_prepare_session", None)
+        ensure_session_ready = getattr(self._ble_client, "_ensure_session_ready", None)
+        read_modbus_register = getattr(self._ble_client, "_read_modbus_register", None)
+        close_session = getattr(self._ble_client, "_close_session", None)
+        if not all(
+            callable(method)
+            for method in (
+                prepare_session,
+                ensure_session_ready,
+                read_modbus_register,
+                close_session,
+            )
+        ):
+            self.logger.debug(
+                "Installed renogy-ble does not expose the session helpers needed "
+                "for RIV setting readback"
+            )
+            return {}
+
+        session = await prepare_session(device)
+        session_lock = getattr(session, "lock", None)
+        if session_lock is None:
+            await close_session(device.address, device.name, session, remove=True)
+            return {}
+
+        updates: dict[str, int | float] = {}
+        remove_session = False
+        async with session_lock:
+            try:
+                await ensure_session_ready(device, session)
+                client = getattr(session, "client", None)
+                if client is None:
+                    raise RuntimeError("BLE session is not connected")
+
+                await asyncio.sleep(RIV_INVERTER_INIT_DELAY)
+                try:
+                    await client.read_gatt_char(RIV_INVERTER_INIT_CHAR_UUID)
+                except Exception as err:  # noqa: BLE001
+                    self.logger.debug(
+                        "RIV init read failed before settings readback for %s: %s",
+                        device.name,
+                        err,
+                    )
+
+                for index, (register, word_count, fields) in enumerate(
+                    RIV_CONTROL_READ_SPECS
+                ):
+                    if index > 0:
+                        await asyncio.sleep(RIV_INVERTER_INTER_COMMAND_DELAY)
+
+                    response = await read_modbus_register(
+                        session,
+                        device_id=INVERTER_DEVICE_ID,
+                        function_code=0x03,
+                        register=register,
+                        word_count=word_count,
+                        cmd_name=f"RIV setting register {register}",
+                        device_name=device.name,
+                        timeout=RIV_INVERTER_COMMAND_TIMEOUT,
+                    )
+                    if response is None:
+                        if getattr(session, "desynchronized", False):
+                            break
+                        continue
+
+                    words = self._decode_modbus_words(response, word_count)
+                    if words is None:
+                        continue
+
+                    for key, word_offset, scale in fields:
+                        raw_value = words[word_offset]
+                        updates[key] = (
+                            raw_value if scale == 1.0 else raw_value * scale
+                        )
+            except Exception as err:  # noqa: BLE001
+                remove_session = True
+                self.logger.debug(
+                    "Unable to read RIV control state from %s: %s",
+                    device.name,
+                    err,
+                )
+            finally:
+                desynchronized = bool(getattr(session, "desynchronized", False))
+                if (
+                    remove_session
+                    or desynchronized
+                    or self._client_transport_mode()
+                    != NonShuntConnectionMode.PERSISTENT_SESSION.value
+                ):
+                    try:
+                        await close_session(
+                            device.address,
+                            device.name,
+                            session,
+                            remove=remove_session or desynchronized,
+                        )
+                    except Exception:  # noqa: BLE001
+                        self.logger.debug(
+                            "Unable to close RIV settings readback session for %s",
+                            device.name,
+                            exc_info=True,
+                        )
+
+        if updates:
+            device.parsed_data.update(updates)
+            current_data = dict(self.data) if isinstance(self.data, dict) else {}
+            current_data.update(updates)
+            self.data = current_data
+            self.logger.debug("Updated RIV control state: %s", updates)
+
+        return updates
 
     def _warn_if_model_mismatch(self) -> None:
         """Warn once when the reported model implies a different device type.
