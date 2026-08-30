@@ -1,0 +1,49 @@
+name: Fix RIV switch type annotation
+
+on:
+  push:
+    branches:
+      - fix/bt-th-riv-inverter-detection
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/bt-th-riv-inverter-detection
+      - name: Add concrete entity description type
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/renogy_ble/switch.py')
+          text = path.read_text()
+          old = '''class RenogyRegisterSwitch(SwitchEntity):
+              """Writable RIV inverter switch backed by a Modbus register."""
+
+              _attr_has_entity_name = True
+          '''.replace('              ', '    ')
+          new = '''class RenogyRegisterSwitch(SwitchEntity):
+              """Writable RIV inverter switch backed by a Modbus register."""
+
+              entity_description: RenogyBLESwitchDescription
+              _attr_has_entity_name = True
+          '''.replace('              ', '    ')
+          if old not in text:
+              raise SystemExit('target class block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/fix-ty-switch.yml
+      - name: Commit type fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/renogy_ble/switch.py .github/workflows/fix-ty-switch.yml
+          git commit -m 'fix: type RIV switch entity description'
+          git push origin HEAD:fix/bt-th-riv-inverter-detection
