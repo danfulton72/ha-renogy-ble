@@ -28,13 +28,14 @@ MAX_UNAVAILABLE_RETRY_INTERVAL = 60  # minutes
 RENOGY_BT_PREFIX = "BT-TH-"
 RENOGY_INVERTER_PREFIX = "RNGRIU"
 RENOGY_REGO_INVERTER_PREFIX = "BTRIC"
+RIV_INVERTER_MODEL_PREFIX = "RIV"
 RENOGY_BATTERY_PRO_PREFIXES = ("RNGRBP", "RNGC", "RNGPRO")
 
 # Configuration parameters
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_MAX_FAILURES = "max_failures"
 CONF_UNAVAILABLE_RETRY_INTERVAL = "unavailable_retry_interval"
-CONF_DEVICE_TYPE = "device_type"  # New constant for device type
+CONF_DEVICE_TYPE = "device_type"
 CONF_DEVICE_NAME = "device_name"
 CONF_SHUNT_CONNECTION_MODE = "shunt_connection_mode"
 CONF_NON_SHUNT_CONNECTION_MODE = "non_shunt_connection_mode"
@@ -45,16 +46,16 @@ DEFAULT_COMMUNICATION_HUB_ENABLED = False
 ATTR_MANUFACTURER = "Renogy"
 
 
-# Define device types as Enum
 class DeviceType(Enum):
+    """Supported Renogy device types."""
+
     CONTROLLER = "controller"
     BATTERY = "battery"
     INVERTER = "inverter"
-    DCC = "dcc"  # DC-DC Charger (with or without MPPT)
-    SHUNT300 = "shunt300"  # Renogy Shunt300
+    DCC = "dcc"
+    SHUNT300 = "shunt300"
 
 
-# List of supported device types
 DEVICE_TYPES = [e.value for e in DeviceType]
 DEFAULT_DEVICE_TYPE = DeviceType.CONTROLLER.value
 
@@ -80,7 +81,6 @@ class NonShuntConnectionMode(Enum):
 NON_SHUNT_CONNECTION_MODES = [mode.value for mode in NonShuntConnectionMode]
 DEFAULT_NON_SHUNT_CONNECTION_MODE = NonShuntConnectionMode.INTERMITTENT.value
 
-# List of fully supported device types
 SUPPORTED_DEVICE_TYPES = [
     DeviceType.CONTROLLER.value,
     DeviceType.BATTERY.value,
@@ -90,7 +90,6 @@ SUPPORTED_DEVICE_TYPES = [
 ]
 
 
-# DCC Charger Register Addresses (for write operations)
 class DCCRegister:
     """Modbus register addresses for DCC charger parameters."""
 
@@ -115,17 +114,28 @@ class DCCRegister:
     SOLAR_CUTOFF_CURRENT = 0xE038
 
 
-# REGO-series inverter setting registers (function 0x06, value x10).
 class InverterRegister:
-    """Modbus registers for REGO-series inverter settings."""
+    """Modbus registers for supported inverter settings."""
 
+    # Shared/REGO settings.
     CHARGE_CURRENT = 0x1146
     LOW_VOLTAGE_WARN = 0x114E
     BATTERY_OVER_VOLTAGE = 0x1164
     AC_INPUT_CURRENT_LIMIT = 0x1168
 
+    # RIV-series settings confirmed from Renogy app BLE captures.
+    BEEP = 0x1005
+    OUTPUT = 0x1006
+    EQUALIZATION_VOLTAGE = 0x1149
+    BOOST_VOLTAGE = 0x114A
+    FLOAT_VOLTAGE = 0x114B
+    OVERDISCHARGE_SHUTDOWN = 0x114F
+    OUTPUT_PRIORITY = 0x1159
+    OVERVOLTAGE_RECOVERY = 0x1165
+    UNDERVOLTAGE_RECOVERY = 0x1166
+    LITHIUM_ACTIVATION = 0x1169
 
-# DCC Battery Type Values
+
 DCC_BATTERY_TYPES = {
     0: "custom",
     1: "open",
@@ -134,12 +144,7 @@ DCC_BATTERY_TYPES = {
     4: "lithium",
 }
 
-# Reverse mapping for setting battery type
 DCC_BATTERY_TYPE_VALUES = {v: k for k, v in DCC_BATTERY_TYPES.items()}
 
-# DCC Max Charging Current options (in amps)
-# Device stores as centiamps, so 40A = 4000
 DCC_MAX_CURRENT_OPTIONS = [10, 20, 30, 40, 50, 60]
-
-# Mapping from amps to centiamps for writing
 DCC_MAX_CURRENT_TO_DEVICE = {amp: amp * 100 for amp in DCC_MAX_CURRENT_OPTIONS}

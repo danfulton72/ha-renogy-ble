@@ -22,7 +22,9 @@ from .const import (
     DEFAULT_DEVICE_TYPE,
     DOMAIN,
     LOGGER,
+    RIV_INVERTER_MODEL_PREFIX,
     DeviceType,
+    InverterRegister,
 )
 from .device_name import is_device_name_ready
 
@@ -33,11 +35,48 @@ KEY_LOAD_STATUS = "load_status"
 class RenogyBLESwitchDescription(SwitchEntityDescription):
     """Describes a Renogy BLE switch."""
 
+    register: int = 0
+    on_value: int = 1
+    off_value: int = 0
+
 
 LOAD_SWITCH = RenogyBLESwitchDescription(
     key=KEY_LOAD_STATUS,
     name="DC Load",
 )
+
+RIV_SWITCHES = (
+    RenogyBLESwitchDescription(
+        key="inverter_beep",
+        name="Beep",
+        register=InverterRegister.BEEP,
+        on_value=0,
+        off_value=1,
+    ),
+    RenogyBLESwitchDescription(
+        key="inverter_output",
+        name="Output",
+        register=InverterRegister.OUTPUT,
+        on_value=1,
+        off_value=2,
+    ),
+    RenogyBLESwitchDescription(
+        key="inverter_lithium_activation",
+        name="Lithium Activation",
+        register=InverterRegister.LITHIUM_ACTIVATION,
+        on_value=1,
+        off_value=0,
+    ),
+)
+
+
+def _coordinator_model(coordinator: RenogyActiveBluetoothCoordinator) -> str:
+    """Return the latest device model reported by the coordinator."""
+    if coordinator.device and coordinator.device.parsed_data:
+        return str(coordinator.device.parsed_data.get("model", ""))
+    if isinstance(coordinator.data, dict):
+        return str(coordinator.data.get("model", ""))
+    return ""
 
 
 async def async_setup_entry(
@@ -53,6 +92,16 @@ async def async_setup_entry(
 
     device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
     LOGGER.debug("Setting up switches for device type: %s", device_type)
+
+    if device_type == DeviceType.INVERTER.value:
+        if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+            async_add_entities(
+                [
+                    RenogyRegisterSwitch(coordinator, coordinator.device, description)
+                    for description in RIV_SWITCHES
+                ]
+            )
+        return
 
     if device_type != DeviceType.CONTROLLER.value:
         LOGGER.debug(
@@ -77,7 +126,6 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
 
     entity_description: RenogyBLESwitchDescription
     coordinator: RenogyActiveBluetoothCoordinator
-    # Friendly name = device name + entity name, so UI device renames cascade.
     _attr_has_entity_name = True
 
     def __init__(
@@ -205,3 +253,57 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
         self.device
         self._attr_is_on = None
         self.async_write_ha_state()
+
+
+class RenogyRegisterSwitch(SwitchEntity):
+    """Writable RIV inverter switch backed by a Modbus register."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RenogyActiveBluetoothCoordinator,
+        device: Optional[RenogyBLEDevice],
+        description: RenogyBLESwitchDescription,
+    ) -> None:
+        """Initialize an inverter register switch."""
+        self.coordinator = coordinator
+        self._device = device
+        self.entity_description = description
+        self._attr_is_on = None
+        address = device.address if device else coordinator.address
+        self._attr_unique_id = f"{address}_{description.key}"
+        self._attr_name = cast("str | None", description.name)
+        model = _coordinator_model(coordinator) or "Renogy RIV Inverter"
+        name = device.name if device else "Renogy RIV Inverter"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, address)},
+            name=name,
+            manufacturer=ATTR_MANUFACTURER,
+            model=model,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Return whether the inverter switch is available."""
+        return is_entity_available(self.coordinator, self._device)
+
+    async def async_turn_on(self, **_kwargs: Any) -> None:
+        """Write the captured register value for ON."""
+        await self._async_write_state(True)
+
+    async def async_turn_off(self, **_kwargs: Any) -> None:
+        """Write the captured register value for OFF."""
+        await self._async_write_state(False)
+
+    async def _async_write_state(self, state: bool) -> None:
+        value = (
+            self.entity_description.on_value
+            if state
+            else self.entity_description.off_value
+        )
+        if await self.coordinator.async_write_register(
+            self.entity_description.register, value
+        ):
+            self._attr_is_on = state
+            self.async_write_ha_state()
