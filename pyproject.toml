@@ -17,6 +17,9 @@ dev = [
     "ty==0.0.72",
 ]
 
+[tool.uv]
+override-dependencies = ["mashumaro>=3.17,<4"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
