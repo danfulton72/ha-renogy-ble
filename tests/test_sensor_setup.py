@@ -234,7 +234,7 @@ def _install_module_stubs() -> None:
     const_module.UnitOfTemperature = UnitOfTemperature
     sys.modules["homeassistant.const"] = const_module
 
-    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy_ble.ble"))
 
     class RenogyActiveBluetoothCoordinator:
         """Stub coordinator class for testing."""
@@ -244,16 +244,16 @@ def _install_module_stubs() -> None:
 
     ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
     ble_module.RenogyBLEDevice = RenogyBLEDevice
-    sys.modules["custom_components.renogy.ble"] = ble_module
+    sys.modules["custom_components.renogy_ble.ble"] = ble_module
 
 
 def _load_sensor_module() -> Any:
     """Load the sensor module with stubs in place."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.sensor", None)
-    sys.modules.pop("custom_components.renogy.const", None)
-    sys.modules.pop("custom_components.renogy", None)
-    return importlib.import_module("custom_components.renogy.sensor")
+    sys.modules.pop("custom_components.renogy_ble.sensor", None)
+    sys.modules.pop("custom_components.renogy_ble.const", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
+    return importlib.import_module("custom_components.renogy_ble.sensor")
 
 
 def _read_sensor_value(

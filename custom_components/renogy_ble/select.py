@@ -75,10 +75,19 @@ async def async_setup_entry(
 
     renogy_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = renogy_data["coordinator"]
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
+    configured_device_type = config_entry.data.get(
+        CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE
+    )
+    device_type = getattr(coordinator, "device_type", configured_device_type)
+    if not isinstance(device_type, str):
+        device_type = configured_device_type
 
     if device_type == DeviceType.INVERTER.value:
-        if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+        if (
+            _coordinator_model(coordinator)
+            .upper()
+            .startswith(RIV_INVERTER_MODEL_PREFIX)
+        ):
             async_add_entities(
                 [RenogyOutputPrioritySelect(coordinator, coordinator.device)]
             )
@@ -192,7 +201,11 @@ class RenogyBatteryTypeSelect(SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         type_key = next(
-            (key for key, display in BATTERY_TYPE_DISPLAY_NAMES.items() if display == option),
+            (
+                key
+                for key, display in BATTERY_TYPE_DISPLAY_NAMES.items()
+                if display == option
+            ),
             None,
         )
         if type_key is None:
@@ -287,7 +300,7 @@ class RenogyMaxCurrentSelect(SelectEntity):
                 display = f"{current_int}A"
                 self._attr_current_option = display
                 return display
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
         return None
 

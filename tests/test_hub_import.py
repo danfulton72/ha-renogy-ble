@@ -10,7 +10,7 @@ from pathlib import Path
 def test_real_hub_module_imports_in_clean_interpreter() -> None:
     """Load the production Hub module without package or test-module stubs."""
     repo_root = Path(__file__).resolve().parents[1]
-    hub_path = repo_root / "custom_components" / "renogy" / "hub.py"
+    hub_path = repo_root / "custom_components" / "renogy_ble" / "hub.py"
     script = f"""
 import importlib.util
 import sys
@@ -23,18 +23,20 @@ custom_components_pkg = types.ModuleType("custom_components")
 custom_components_pkg.__path__ = [str(hub_path.parents[1])]
 sys.modules["custom_components"] = custom_components_pkg
 
-renogy_pkg = types.ModuleType("custom_components.renogy")
+renogy_pkg = types.ModuleType("custom_components.renogy_ble")
 renogy_pkg.__path__ = [str(hub_path.parent)]
-sys.modules["custom_components.renogy"] = renogy_pkg
+sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
-spec = importlib.util.spec_from_file_location("custom_components.renogy.hub", hub_path)
+spec = importlib.util.spec_from_file_location(
+    "custom_components.renogy_ble.hub", hub_path
+)
 assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 assert Path(module.__file__).resolve() == hub_path
-assert module.__name__ == "custom_components.renogy.hub"
+assert module.__name__ == "custom_components.renogy_ble.hub"
 assert hasattr(module, "RenogyHubBatteryManager")
 assert hasattr(module, "RenogyHubBatteryState")
 assert module._optional_float("1.5") == 1.5

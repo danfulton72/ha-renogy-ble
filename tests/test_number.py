@@ -160,7 +160,7 @@ def _install_module_stubs() -> None:
     entity_platform_module.AddEntitiesCallback = AddEntitiesCallback
     sys.modules["homeassistant.helpers.entity_platform"] = entity_platform_module
 
-    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy_ble.ble"))
 
     class RenogyActiveBluetoothCoordinator:
         """Stub coordinator class for testing."""
@@ -170,23 +170,23 @@ def _install_module_stubs() -> None:
 
     ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
     ble_module.RenogyBLEDevice = RenogyBLEDevice
-    sys.modules["custom_components.renogy.ble"] = ble_module
+    sys.modules["custom_components.renogy_ble.ble"] = ble_module
 
 
 def _load_number_module() -> Any:
     """Load the number module with stubs in place."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.number", None)
-    sys.modules.pop("custom_components.renogy", None)
-    return importlib.import_module("custom_components.renogy.number")
+    sys.modules.pop("custom_components.renogy_ble.number", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
+    return importlib.import_module("custom_components.renogy_ble.number")
 
 
 def _load_select_module() -> Any:
     """Load the select module with stubs in place."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.select", None)
-    sys.modules.pop("custom_components.renogy", None)
-    return importlib.import_module("custom_components.renogy.select")
+    sys.modules.pop("custom_components.renogy_ble.select", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
+    return importlib.import_module("custom_components.renogy_ble.select")
 
 
 def test_unresolved_writable_entities_preserve_legacy_object_ids() -> None:

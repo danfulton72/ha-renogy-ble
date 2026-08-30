@@ -19,15 +19,15 @@ def _load_config_flow_module() -> Any:
     """Load config_flow with minimal Home Assistant stubs."""
     repo_root = Path(__file__).resolve().parents[1]
     custom_components_path = str(repo_root / "custom_components")
-    renogy_path = str(repo_root / "custom_components" / "renogy")
+    renogy_path = str(repo_root / "custom_components" / "renogy_ble")
 
     custom_components_pkg = types.ModuleType("custom_components")
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
     homeassistant_module = cast(Any, types.ModuleType("homeassistant"))
     sys.modules["homeassistant"] = homeassistant_module
@@ -171,10 +171,10 @@ def _load_config_flow_module() -> Any:
     const_module.CONF_SCAN_INTERVAL = "scan_interval"
     sys.modules["homeassistant.const"] = const_module
 
-    sys.modules.pop("custom_components.renogy.const", None)
-    sys.modules.pop("custom_components.renogy.device_name", None)
-    sys.modules.pop("custom_components.renogy.config_flow", None)
-    return importlib.import_module("custom_components.renogy.config_flow")
+    sys.modules.pop("custom_components.renogy_ble.const", None)
+    sys.modules.pop("custom_components.renogy_ble.device_name", None)
+    sys.modules.pop("custom_components.renogy_ble.config_flow", None)
+    return importlib.import_module("custom_components.renogy_ble.config_flow")
 
 
 def test_bluetooth_discovery_uses_fallback_name_for_nameless_device() -> None:
@@ -205,7 +205,7 @@ def test_manifest_registers_rngpro_bluetooth_discovery() -> None:
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "custom_components"
-        / "renogy"
+        / "renogy_ble"
         / "manifest.json"
     )
     manifest = json.loads(manifest_path.read_text())
@@ -216,7 +216,7 @@ def test_manifest_registers_rngpro_bluetooth_discovery() -> None:
 def test_bluetooth_discovery_routes_rngpro_to_battery() -> None:
     """RNGPRO bluetooth discovery should default to the battery device type."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow = config_flow_module.RenogyConfigFlow()
     flow.context = {}
     discovery_info = config_flow_module.BluetoothServiceInfoBleak(
@@ -238,7 +238,7 @@ def test_bluetooth_discovery_routes_rngpro_to_battery() -> None:
 def test_bluetooth_entry_uses_fallback_title_for_nameless_device() -> None:
     """Nameless bluetooth matches should not create entries with None titles."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow = config_flow_module.RenogyConfigFlow()
     flow._discovered_device = config_flow_module.BluetoothServiceInfoBleak(
         address="AA:BB:CC:DD:EE:FF",
@@ -270,7 +270,7 @@ def test_bluetooth_entry_uses_fallback_title_for_nameless_device() -> None:
 def test_manual_entry_detects_battery_when_default_type_is_unchanged() -> None:
     """Manual selection should auto-correct the unchanged controller default."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow = config_flow_module.RenogyConfigFlow()
     flow._discovered_devices = {
         "AA:BB:CC:DD:EE:FF": config_flow_module.BluetoothServiceInfoBleak(
@@ -305,7 +305,7 @@ def test_manual_entry_detects_battery_when_default_type_is_unchanged() -> None:
 def test_manual_entry_keeps_explicit_device_type_override() -> None:
     """Manual selection should preserve an explicit non-default override."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow = config_flow_module.RenogyConfigFlow()
     flow._discovered_devices = {
         "AA:BB:CC:DD:EE:FF": config_flow_module.BluetoothServiceInfoBleak(
@@ -377,7 +377,7 @@ def _schema_default(schema: Any, field: str) -> Any:
 def test_reconfigure_form_defaults_to_current_entry_values() -> None:
     """The reconfigure form should preselect the stored type and interval."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, _entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -406,7 +406,7 @@ def test_reconfigure_form_defaults_to_current_entry_values() -> None:
 def test_reconfigure_form_defaults_to_options_scan_interval() -> None:
     """The form should show the active options-backed polling interval."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, _entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -425,7 +425,7 @@ def test_reconfigure_form_defaults_to_options_scan_interval() -> None:
 def test_reconfigure_form_suggests_dcc_from_reported_model() -> None:
     """A DCC model reported by the coordinator should preselect the DCC type."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, _entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -451,7 +451,7 @@ def test_reconfigure_form_suggests_dcc_from_reported_model() -> None:
 def test_reconfigure_updates_device_type_and_reloads() -> None:
     """Submitting the reconfigure form should update entry data in place."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -484,7 +484,7 @@ def test_reconfigure_updates_device_type_and_reloads() -> None:
 def test_reconfigure_updates_scan_interval_already_saved_in_options() -> None:
     """Reconfigure must not leave an older options value shadowing entry data."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -519,7 +519,7 @@ def test_reconfigure_updates_scan_interval_already_saved_in_options() -> None:
 def test_reconfigure_rejects_unsupported_device_type() -> None:
     """Unsupported device types should abort with a descriptive reason."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -548,7 +548,7 @@ def test_reconfigure_rejects_unsupported_device_type() -> None:
 def test_reconfigure_form_handles_missing_coordinator() -> None:
     """A not-yet-loaded entry should fall back to the stored device type."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
     flow, _entry = _make_reconfigure_flow(
         config_flow_module,
         const_module,
@@ -583,7 +583,7 @@ def _options_entry(const_module: Any, device_type: str, options: Any = None) -> 
 def test_options_flow_shows_all_three_knobs() -> None:
     """The options form exposes poll interval, failure grace, reconnect interval."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     entry = _options_entry(const_module, const_module.DeviceType.CONTROLLER.value)
     handler = config_flow_module.RenogyOptionsFlowHandler(entry)
@@ -601,7 +601,7 @@ def test_options_flow_shows_all_three_knobs() -> None:
 def test_options_flow_shunt_shows_knobs_and_connection_mode() -> None:
     """The shunt options form keeps connection mode and gains the three knobs."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     entry = _options_entry(const_module, const_module.DeviceType.SHUNT300.value)
     handler = config_flow_module.RenogyOptionsFlowHandler(entry)
@@ -619,7 +619,7 @@ def test_options_flow_shunt_shows_knobs_and_connection_mode() -> None:
 def test_options_flow_accepts_and_stores_valid_input() -> None:
     """Valid options are stored in the entry options."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     entry = _options_entry(const_module, const_module.DeviceType.CONTROLLER.value)
     handler = config_flow_module.RenogyOptionsFlowHandler(entry)
@@ -639,7 +639,7 @@ def test_options_flow_accepts_and_stores_valid_input() -> None:
 def test_runtime_options_have_user_facing_labels(filename: str) -> None:
     """Every runtime option should have a canonical English label."""
     integration_path = (
-        Path(__file__).resolve().parents[1] / "custom_components" / "renogy"
+        Path(__file__).resolve().parents[1] / "custom_components" / "renogy_ble"
     )
     labels = json.loads((integration_path / filename).read_text())["options"]["step"][
         "init"
@@ -663,7 +663,7 @@ def test_runtime_options_have_user_facing_labels(filename: str) -> None:
 def test_options_flow_rejects_out_of_range(field: str, value: int) -> None:
     """The options schema range-validates every knob."""
     config_flow_module = _load_config_flow_module()
-    const_module = importlib.import_module("custom_components.renogy.const")
+    const_module = importlib.import_module("custom_components.renogy_ble.const")
 
     entry = _options_entry(const_module, const_module.DeviceType.CONTROLLER.value)
     handler = config_flow_module.RenogyOptionsFlowHandler(entry)

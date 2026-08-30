@@ -1,10 +1,3 @@
-"""Test configuration for the Renogy BLE integration."""
+"""Shared pytest configuration for Renogy BLE integration tests."""
 
-import importlib
-import sys
-
-# Keep the imported test suite working while the repository moves from the old
-# module path to the new Home Assistant domain. This alias exists only in tests;
-# HACS installs only custom_components/renogy_ble.
-renogy_ble = importlib.import_module("custom_components.renogy_ble")
-sys.modules.setdefault("custom_components.renogy", renogy_ble)
+from __future__ import annotations

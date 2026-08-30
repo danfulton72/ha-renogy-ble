@@ -168,42 +168,42 @@ def _install_module_stubs() -> None:
 
     repo_root = Path(__file__).resolve().parents[1]
     custom_components_path = str(repo_root / "custom_components")
-    renogy_path = str(repo_root / "custom_components" / "renogy")
+    renogy_path = str(repo_root / "custom_components" / "renogy_ble")
 
     custom_components_pkg = types.ModuleType("custom_components")
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
     # hub_sensor.py can safely use the real integration constants.
-    # Do not leave a synthetic custom_components.renogy.const module behind,
+    # Do not leave a synthetic custom_components.renogy_ble.const module behind,
     # because later tests import the actual integration package.
-    sys.modules.pop("custom_components.renogy.const", None)
+    sys.modules.pop("custom_components.renogy_ble.const", None)
 
-    hub_stub = cast(Any, types.ModuleType("custom_components.renogy.hub"))
+    hub_stub = cast(Any, types.ModuleType("custom_components.renogy_ble.hub"))
     hub_stub.RenogyHubBatteryState = _BatteryState
     hub_stub.hub_battery_identifier = lambda address, slave_id: (
         f"{address}:hub:{slave_id:02X}"
     )
-    sys.modules["custom_components.renogy.hub"] = hub_stub
+    sys.modules["custom_components.renogy_ble.hub"] = hub_stub
 
 
 def _load_hub_sensor_module() -> Any:
     """Load the Hub sensor module without leaking test stubs to later tests."""
     _install_module_stubs()
-    sys.modules.pop("custom_components.renogy.hub_sensor", None)
+    sys.modules.pop("custom_components.renogy_ble.hub_sensor", None)
 
-    module = importlib.import_module("custom_components.renogy.hub_sensor")
+    module = importlib.import_module("custom_components.renogy_ble.hub_sensor")
 
     # Hub-specific imports and the synthetic integration package are scoped to
     # these focused tests. Remove them after import so unrelated platform tests
     # load the production package and constants afresh.
-    sys.modules.pop("custom_components.renogy.hub", None)
-    sys.modules.pop("custom_components.renogy.const", None)
-    sys.modules.pop("custom_components.renogy", None)
+    sys.modules.pop("custom_components.renogy_ble.hub", None)
+    sys.modules.pop("custom_components.renogy_ble.const", None)
+    sys.modules.pop("custom_components.renogy_ble", None)
     custom_components_pkg = sys.modules.get("custom_components")
     if custom_components_pkg is not None:
         custom_components_pkg.__dict__.pop("renogy", None)
@@ -296,10 +296,10 @@ def test_hub_battery_0x33_is_child_device_with_validated_values() -> None:
     assert voltage.available is True
     assert voltage._attr_unique_id == "F0:F8:F2:57:47:0D:hub:33_battery_voltage"
     assert voltage._attr_device_info["identifiers"] == {
-        ("renogy", "F0:F8:F2:57:47:0D:hub:33")
+        ("renogy_ble", "F0:F8:F2:57:47:0D:hub:33")
     }
     assert voltage._attr_device_info["via_device"] == (
-        "renogy",
+        "renogy_ble",
         "F0:F8:F2:57:47:0D",
     )
     assert voltage._attr_device_info["name"] == "Renogy Hub Battery 0x33"

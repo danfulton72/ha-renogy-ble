@@ -90,11 +90,20 @@ async def async_setup_entry(
     renogy_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = renogy_data["coordinator"]
 
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
-    LOGGER.debug("Setting up switches for device type: %s", device_type)
+    configured_device_type = config_entry.data.get(
+        CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE
+    )
+    device_type = getattr(coordinator, "device_type", configured_device_type)
+    if not isinstance(device_type, str):
+        device_type = configured_device_type
+    LOGGER.debug("Setting up switches for resolved device type: %s", device_type)
 
     if device_type == DeviceType.INVERTER.value:
-        if _coordinator_model(coordinator).upper().startswith(RIV_INVERTER_MODEL_PREFIX):
+        if (
+            _coordinator_model(coordinator)
+            .upper()
+            .startswith(RIV_INVERTER_MODEL_PREFIX)
+        ):
             async_add_entities(
                 [
                     RenogyRegisterSwitch(coordinator, coordinator.device, description)
@@ -258,6 +267,7 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
 class RenogyRegisterSwitch(SwitchEntity):
     """Writable RIV inverter switch backed by a Modbus register."""
 
+    entity_description: RenogyBLESwitchDescription
     _attr_has_entity_name = True
 
     def __init__(

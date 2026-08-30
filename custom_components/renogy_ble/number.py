@@ -12,7 +12,11 @@ from homeassistant.components.number import (
     NumberMode,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfElectricCurrent, UnitOfElectricPotential, UnitOfTime
+from homeassistant.const import (
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
@@ -66,17 +70,49 @@ def _voltage_description(
 
 
 DCC_VOLTAGE_NUMBERS: tuple[RenogyNumberEntityDescription, ...] = (
-    _voltage_description("overvoltage_threshold", "Overvoltage Threshold", DCCRegister.OVERVOLTAGE_THRESHOLD),
-    _voltage_description("charging_limit_voltage", "Charging Limit Voltage", DCCRegister.CHARGING_LIMIT_VOLTAGE),
-    _voltage_description("equalization_voltage", "Equalization Voltage", DCCRegister.EQUALIZATION_VOLTAGE),
+    _voltage_description(
+        "overvoltage_threshold",
+        "Overvoltage Threshold",
+        DCCRegister.OVERVOLTAGE_THRESHOLD,
+    ),
+    _voltage_description(
+        "charging_limit_voltage",
+        "Charging Limit Voltage",
+        DCCRegister.CHARGING_LIMIT_VOLTAGE,
+    ),
+    _voltage_description(
+        "equalization_voltage", "Equalization Voltage", DCCRegister.EQUALIZATION_VOLTAGE
+    ),
     _voltage_description("boost_voltage", "Boost Voltage", DCCRegister.BOOST_VOLTAGE),
     _voltage_description("float_voltage", "Float Voltage", DCCRegister.FLOAT_VOLTAGE),
-    _voltage_description("boost_return_voltage", "Boost Return Voltage", DCCRegister.BOOST_RETURN_VOLTAGE),
-    _voltage_description("overdischarge_return_voltage", "Overdischarge Return Voltage", DCCRegister.OVERDISCHARGE_RETURN_VOLTAGE),
-    _voltage_description("undervoltage_warning", "Undervoltage Warning", DCCRegister.UNDERVOLTAGE_WARNING),
-    _voltage_description("overdischarge_voltage", "Overdischarge Voltage", DCCRegister.OVERDISCHARGE_VOLTAGE),
-    _voltage_description("discharge_limit_voltage", "Discharge Limit Voltage", DCCRegister.DISCHARGE_LIMIT_VOLTAGE),
-    _voltage_description("reverse_charging_voltage", "Reverse Charging Voltage", DCCRegister.REVERSE_CHARGING_VOLTAGE, 11.0, 15.0),
+    _voltage_description(
+        "boost_return_voltage", "Boost Return Voltage", DCCRegister.BOOST_RETURN_VOLTAGE
+    ),
+    _voltage_description(
+        "overdischarge_return_voltage",
+        "Overdischarge Return Voltage",
+        DCCRegister.OVERDISCHARGE_RETURN_VOLTAGE,
+    ),
+    _voltage_description(
+        "undervoltage_warning", "Undervoltage Warning", DCCRegister.UNDERVOLTAGE_WARNING
+    ),
+    _voltage_description(
+        "overdischarge_voltage",
+        "Overdischarge Voltage",
+        DCCRegister.OVERDISCHARGE_VOLTAGE,
+    ),
+    _voltage_description(
+        "discharge_limit_voltage",
+        "Discharge Limit Voltage",
+        DCCRegister.DISCHARGE_LIMIT_VOLTAGE,
+    ),
+    _voltage_description(
+        "reverse_charging_voltage",
+        "Reverse Charging Voltage",
+        DCCRegister.REVERSE_CHARGING_VOLTAGE,
+        11.0,
+        15.0,
+    ),
 )
 
 DCC_TIME_NUMBERS: tuple[RenogyNumberEntityDescription, ...] = (
@@ -182,8 +218,20 @@ INVERTER_ALL_NUMBERS: tuple[RenogyNumberEntityDescription, ...] = (
         register=InverterRegister.CHARGE_CURRENT,
         scale=10.0,
     ),
-    _voltage_description("inverter_low_voltage_warn", "Low Voltage Warning", InverterRegister.LOW_VOLTAGE_WARN, 9.0, 15.5),
-    _voltage_description("inverter_over_voltage", "Battery Over Voltage", InverterRegister.BATTERY_OVER_VOLTAGE, 9.0, 16.0),
+    _voltage_description(
+        "inverter_low_voltage_warn",
+        "Low Voltage Warning",
+        InverterRegister.LOW_VOLTAGE_WARN,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_over_voltage",
+        "Battery Over Voltage",
+        InverterRegister.BATTERY_OVER_VOLTAGE,
+        9.0,
+        16.0,
+    ),
 )
 
 # RIV1230PCH-23S controls confirmed from Renogy app BLE traffic.
@@ -201,14 +249,62 @@ RIV_INVERTER_NUMBERS: tuple[RenogyNumberEntityDescription, ...] = (
         register=InverterRegister.CHARGE_CURRENT,
         scale=10.0,
     ),
-    _voltage_description("inverter_equalization_voltage", "Equalization Voltage", InverterRegister.EQUALIZATION_VOLTAGE, 9.0, 15.5),
-    _voltage_description("inverter_boost_voltage", "Boost Voltage", InverterRegister.BOOST_VOLTAGE, 9.0, 15.5),
-    _voltage_description("inverter_float_voltage", "Float Voltage", InverterRegister.FLOAT_VOLTAGE, 9.0, 15.5),
-    _voltage_description("inverter_low_voltage_warn", "Low Voltage Warning", InverterRegister.LOW_VOLTAGE_WARN, 9.0, 15.5),
-    _voltage_description("inverter_overdischarge_shutdown", "Overdischarge Shutdown", InverterRegister.OVERDISCHARGE_SHUTDOWN, 9.0, 15.5),
-    _voltage_description("inverter_over_voltage", "Over Voltage Protection", InverterRegister.BATTERY_OVER_VOLTAGE, 9.0, 16.0),
-    _voltage_description("inverter_overvoltage_recovery", "Overvoltage Recovery", InverterRegister.OVERVOLTAGE_RECOVERY, 9.0, 15.5),
-    _voltage_description("inverter_undervoltage_recovery", "Undervoltage Recovery", InverterRegister.UNDERVOLTAGE_RECOVERY, 9.0, 16.0),
+    _voltage_description(
+        "inverter_equalization_voltage",
+        "Equalization Voltage",
+        InverterRegister.EQUALIZATION_VOLTAGE,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_boost_voltage",
+        "Boost Voltage",
+        InverterRegister.BOOST_VOLTAGE,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_float_voltage",
+        "Float Voltage",
+        InverterRegister.FLOAT_VOLTAGE,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_low_voltage_warn",
+        "Low Voltage Warning",
+        InverterRegister.LOW_VOLTAGE_WARN,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_overdischarge_shutdown",
+        "Overdischarge Shutdown",
+        InverterRegister.OVERDISCHARGE_SHUTDOWN,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_over_voltage",
+        "Over Voltage Protection",
+        InverterRegister.BATTERY_OVER_VOLTAGE,
+        9.0,
+        16.0,
+    ),
+    _voltage_description(
+        "inverter_overvoltage_recovery",
+        "Overvoltage Recovery",
+        InverterRegister.OVERVOLTAGE_RECOVERY,
+        9.0,
+        15.5,
+    ),
+    _voltage_description(
+        "inverter_undervoltage_recovery",
+        "Undervoltage Recovery",
+        InverterRegister.UNDERVOLTAGE_RECOVERY,
+        9.0,
+        16.0,
+    ),
 )
 
 
@@ -228,7 +324,12 @@ async def async_setup_entry(
     """Set up the Renogy BLE number entities."""
     renogy_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = renogy_data["coordinator"]
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
+    configured_device_type = config_entry.data.get(
+        CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE
+    )
+    device_type = getattr(coordinator, "device_type", configured_device_type)
+    if not isinstance(device_type, str):
+        device_type = configured_device_type
     model = _coordinator_model(coordinator)
 
     if device_type == DeviceType.DCC.value:
@@ -284,7 +385,8 @@ class RenogyNumberEntity(NumberEntity):
                 identifiers={(DOMAIN, device.address)},
                 name=device.name,
                 manufacturer=ATTR_MANUFACTURER,
-                model=_coordinator_model(coordinator) or f"Renogy {device_type.upper()}",
+                model=_coordinator_model(coordinator)
+                or f"Renogy {device_type.upper()}",
             )
         else:
             self._attr_unique_id = f"{coordinator.address}_{description.key}"
