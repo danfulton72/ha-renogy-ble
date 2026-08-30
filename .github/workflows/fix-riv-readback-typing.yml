@@ -1,0 +1,48 @@
+name: Fix RIV readback typing
+
+on:
+  push:
+    branches:
+      - fix/riv-control-state-readback
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/riv-control-state-readback
+      - name: Type dynamic session helpers
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("custom_components/renogy_ble/ble.py")
+          text = path.read_text()
+          old = '''        if not all(\n            callable(method)\n            for method in (\n                prepare_session,\n                ensure_session_ready,\n                read_modbus_register,\n                close_session,\n            )\n        ):\n            self.logger.debug(\n                "Installed renogy-ble does not expose the session helpers needed "\n                "for RIV setting readback"\n            )\n            return {}\n\n        session = await prepare_session(device)\n'''
+          new = '''        if (\n            not callable(prepare_session)\n            or not callable(ensure_session_ready)\n            or not callable(read_modbus_register)\n            or not callable(close_session)\n        ):\n            self.logger.debug(\n                "Installed renogy-ble does not expose the session helpers needed "\n                "for RIV setting readback"\n            )\n            return {}\n\n        prepare_session_fn = cast(\n            Callable[[RenogyBLEDevice], Awaitable[Any]], prepare_session\n        )\n        ensure_session_ready_fn = cast(\n            Callable[[RenogyBLEDevice, Any], Awaitable[None]], ensure_session_ready\n        )\n        read_modbus_register_fn = cast(\n            Callable[..., Awaitable[bytes | None]], read_modbus_register\n        )\n        close_session_fn = cast(Callable[..., Awaitable[None]], close_session)\n\n        session = await prepare_session_fn(device)\n'''
+          if old not in text:
+              raise SystemExit("typing anchor not found")
+          text = text.replace(old, new, 1)
+
+          # Limit replacements to the new readback method region.
+          start = text.index("    async def async_read_riv_control_state")
+          end = text.index("    def _warn_if_model_mismatch", start)
+          before, block, after = text[:start], text[start:end], text[end:]
+          block = block.replace("await close_session(", "await close_session_fn(")
+          block = block.replace("await ensure_session_ready(", "await ensure_session_ready_fn(")
+          block = block.replace("await read_modbus_register(", "await read_modbus_register_fn(")
+          path.write_text(before + block + after)
+          PY
+
+          rm .github/workflows/fix-riv-readback-typing.yml
+          git config user.name "danfulton72"
+          git config user.email "42965092+danfulton72@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: type RIV control session helpers"
+          git push origin HEAD:fix/riv-control-state-readback
