@@ -267,6 +267,7 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
 class RenogyRegisterSwitch(SwitchEntity):
     """Writable RIV inverter switch backed by a Modbus register."""
 
+    entity_description: RenogyBLESwitchDescription
     _attr_has_entity_name = True
 
     def __init__(
