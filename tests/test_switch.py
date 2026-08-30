@@ -1,0 +1,272 @@
+"""Tests for Renogy BLE switch setup."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import types
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
+
+
+def _install_module_stubs() -> None:
+    """Install minimal Home Assistant module stubs to import the switch module."""
+    homeassistant_module = cast(Any, types.ModuleType("homeassistant"))
+    sys.modules["homeassistant"] = homeassistant_module
+
+    components_module = cast(Any, types.ModuleType("homeassistant.components"))
+    bluetooth_components_module = cast(
+        Any, types.ModuleType("homeassistant.components.bluetooth")
+    )
+    sys.modules["homeassistant.components"] = components_module
+    sys.modules["homeassistant.components.bluetooth"] = bluetooth_components_module
+
+    core_module = cast(Any, types.ModuleType("homeassistant.core"))
+
+    class HomeAssistant:
+        """Stub HomeAssistant class for testing."""
+
+    def callback(func: Any) -> Any:
+        """Return the function unchanged for testing."""
+        return func
+
+    core_module.HomeAssistant = HomeAssistant
+    core_module.callback = callback
+    sys.modules["homeassistant.core"] = core_module
+
+    config_entries_module = cast(Any, types.ModuleType("homeassistant.config_entries"))
+
+    class ConfigEntry:
+        """Stub ConfigEntry class for testing."""
+
+    config_entries_module.ConfigEntry = ConfigEntry
+    sys.modules["homeassistant.config_entries"] = config_entries_module
+
+    passive_module = cast(
+        Any,
+        types.ModuleType(
+            "homeassistant.components.bluetooth.passive_update_coordinator"
+        ),
+    )
+
+    class PassiveBluetoothCoordinatorEntity:
+        """Stub PassiveBluetoothCoordinatorEntity for testing."""
+
+        def __init__(self, coordinator: Any) -> None:
+            self.coordinator = coordinator
+
+    passive_module.PassiveBluetoothCoordinatorEntity = PassiveBluetoothCoordinatorEntity
+    sys.modules["homeassistant.components.bluetooth.passive_update_coordinator"] = (
+        passive_module
+    )
+
+    switch_module = cast(Any, types.ModuleType("homeassistant.components.switch"))
+
+    class SwitchEntity:
+        """Stub SwitchEntity class for testing."""
+
+    @dataclass(frozen=True)
+    class SwitchEntityDescription:
+        """Stub SwitchEntityDescription for testing."""
+
+        key: str | None = None
+        name: str | None = None
+
+    switch_module.SwitchEntity = SwitchEntity
+    switch_module.SwitchEntityDescription = SwitchEntityDescription
+    sys.modules["homeassistant.components.switch"] = switch_module
+
+    helpers_module = cast(Any, types.ModuleType("homeassistant.helpers"))
+    sys.modules["homeassistant.helpers"] = helpers_module
+
+    device_registry_module = cast(
+        Any, types.ModuleType("homeassistant.helpers.device_registry")
+    )
+
+    class DeviceInfo(dict):
+        """Stub DeviceInfo that stores provided fields."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+
+    device_registry_module.DeviceInfo = DeviceInfo
+    device_registry_module.async_get = MagicMock()
+    sys.modules["homeassistant.helpers.device_registry"] = device_registry_module
+
+    entity_platform_module = cast(
+        Any, types.ModuleType("homeassistant.helpers.entity_platform")
+    )
+
+    class AddEntitiesCallback:
+        """Stub AddEntitiesCallback for testing."""
+
+    entity_platform_module.AddEntitiesCallback = AddEntitiesCallback
+    sys.modules["homeassistant.helpers.entity_platform"] = entity_platform_module
+
+    const_module = cast(Any, types.ModuleType("homeassistant.const"))
+    const_module.CONF_ADDRESS = "address"
+
+    class Platform(str, Enum):
+        """Stub Platform enum values for testing."""
+
+        SENSOR = "sensor"
+        NUMBER = "number"
+        SELECT = "select"
+        SWITCH = "switch"
+
+    const_module.Platform = Platform
+    sys.modules["homeassistant.const"] = const_module
+
+    ble_module = cast(Any, types.ModuleType("custom_components.renogy.ble"))
+
+    class RenogyActiveBluetoothCoordinator:
+        """Stub coordinator class for testing."""
+
+    class RenogyBLEDevice:
+        """Stub BLE device class for testing."""
+
+    ble_module.RenogyActiveBluetoothCoordinator = RenogyActiveBluetoothCoordinator
+    ble_module.RenogyBLEDevice = RenogyBLEDevice
+    sys.modules["custom_components.renogy.ble"] = ble_module
+
+
+def _load_switch_module():
+    """Load the switch module with stubs in place."""
+    _install_module_stubs()
+    sys.modules.pop("custom_components.renogy.switch", None)
+    sys.modules.pop("custom_components.renogy", None)
+
+    import importlib
+
+    return importlib.import_module("custom_components.renogy.switch")
+
+
+def test_switch_setup_skips_non_controller() -> None:
+    """Ensure switches are not created for non-controller devices."""
+    switch_module = _load_switch_module()
+    hass = MagicMock()
+    coordinator = MagicMock()
+    hass.data = {switch_module.DOMAIN: {"entry-1": {"coordinator": coordinator}}}
+    config_entry = MagicMock()
+    config_entry.entry_id = "entry-1"
+    config_entry.data = {
+        switch_module.CONF_DEVICE_TYPE: switch_module.DeviceType.DCC.value
+    }
+    async_add_entities = MagicMock()
+
+    asyncio.run(switch_module.async_setup_entry(hass, config_entry, async_add_entities))
+
+    async_add_entities.assert_not_called()
+
+
+def test_switch_setup_adds_controller_switch() -> None:
+    """Ensure switches are created for controller devices."""
+    switch_module = _load_switch_module()
+    device = MagicMock()
+    device.name = "BT-TH-12345"
+    device.address = "AA:BB:CC:DD:EE:FF"
+    device.parsed_data = {}
+    device.is_available = True
+
+    coordinator = MagicMock()
+    coordinator.device = device
+    coordinator.address = device.address
+    coordinator.data = {}
+    coordinator.last_update_success = True
+    coordinator.async_request_refresh = MagicMock()
+
+    hass = MagicMock()
+    hass.data = {switch_module.DOMAIN: {"entry-1": {"coordinator": coordinator}}}
+
+    config_entry = MagicMock()
+    config_entry.entry_id = "entry-1"
+    config_entry.data = {
+        switch_module.CONF_DEVICE_TYPE: switch_module.DeviceType.CONTROLLER.value
+    }
+
+    async_add_entities = MagicMock()
+
+    asyncio.run(switch_module.async_setup_entry(hass, config_entry, async_add_entities))
+
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args[0][0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], switch_module.RenogyLoadSwitch)
+
+
+def test_switch_setup_does_not_wait_for_unknown_device_name() -> None:
+    """Ensure switch setup completes without waiting for a resolved device name."""
+    switch_module = _load_switch_module()
+
+    coordinator = MagicMock()
+    coordinator.device = None
+    coordinator.address = "AA:BB:CC:DD:EE:FF"
+    coordinator.data = {}
+    coordinator.last_update_success = True
+    coordinator.async_request_refresh = AsyncMock()
+
+    hass = MagicMock()
+    hass.data = {switch_module.DOMAIN: {"entry-1": {"coordinator": coordinator}}}
+
+    config_entry = MagicMock()
+    config_entry.entry_id = "entry-1"
+    config_entry.data = {
+        switch_module.CONF_DEVICE_TYPE: switch_module.DeviceType.CONTROLLER.value
+    }
+
+    async_add_entities = MagicMock()
+
+    asyncio.run(switch_module.async_setup_entry(hass, config_entry, async_add_entities))
+
+    coordinator.async_request_refresh.assert_not_awaited()
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args[0][0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], switch_module.RenogyLoadSwitch)
+    assert entities[0]._device is None
+
+
+def test_switch_updates_metadata_when_coordinator_name_resolves() -> None:
+    """Ensure a later coordinator name update refreshes switch metadata."""
+    switch_module = _load_switch_module()
+
+    unresolved_device = MagicMock()
+    unresolved_device.name = "Unknown Device"
+    unresolved_device.address = "AA:BB:CC:DD:EE:FF"
+    unresolved_device.parsed_data = {}
+    unresolved_device.is_available = True
+
+    coordinator = MagicMock()
+    coordinator.device = unresolved_device
+    coordinator.address = unresolved_device.address
+    coordinator.data = {}
+    coordinator.last_update_success = True
+
+    entity = switch_module.RenogyLoadSwitch(
+        coordinator=coordinator,
+        device=None,
+        device_type=switch_module.DeviceType.CONTROLLER.value,
+    )
+    assert entity.suggested_object_id == "Renogy DC Load"
+    entity.async_write_ha_state = MagicMock()
+
+    resolved_device = MagicMock()
+    resolved_device.name = "BT-TH-12345"
+    resolved_device.address = unresolved_device.address
+    resolved_device.parsed_data = {"model": "Rover 40A"}
+    resolved_device.is_available = True
+
+    coordinator.device = resolved_device
+
+    entity._handle_coordinator_update()
+
+    assert entity._device is resolved_device
+    # has_entity_name=True: the entity name is just the description name;
+    # HA composes the friendly name from the device name at display time.
+    assert entity._attr_has_entity_name is True
+    assert entity._attr_name == "DC Load"
+    assert entity._attr_device_info["name"] == "BT-TH-12345"
+    assert entity._attr_device_info["model"] == "Rover 40A"
+    entity.async_write_ha_state.assert_called_once()

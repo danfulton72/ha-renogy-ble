@@ -1,0 +1,35 @@
+[project]
+name = "renogy-ha"
+version = "0.9.0"
+description = "Home Assistant integration for Renogy devices"
+readme = "README.md"
+requires-python = ">=3.14.2"
+dependencies = [
+    "homeassistant>=2026.3.0",
+    "renogy-ble==2.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.1",
+    "ty==0.0.72",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "asyncio: mark test as an asyncio coroutine",
+]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["I", "E", "F"]  # I = isort, E = pycodestyle, F = pyflakes
+
+[tool.ruff.format]
+quote-style = "double"

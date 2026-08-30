@@ -1,0 +1,207 @@
+"""Support for Renogy BLE switches."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional, cast
+
+from homeassistant.components.bluetooth.passive_update_coordinator import (
+    PassiveBluetoothCoordinatorEntity,
+)
+from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .availability import is_entity_available
+from .ble import RenogyActiveBluetoothCoordinator, RenogyBLEDevice
+from .const import (
+    ATTR_MANUFACTURER,
+    CONF_DEVICE_TYPE,
+    DEFAULT_DEVICE_TYPE,
+    DOMAIN,
+    LOGGER,
+    DeviceType,
+)
+from .device_name import is_device_name_ready
+
+KEY_LOAD_STATUS = "load_status"
+
+
+@dataclass(frozen=True)
+class RenogyBLESwitchDescription(SwitchEntityDescription):
+    """Describes a Renogy BLE switch."""
+
+
+LOAD_SWITCH = RenogyBLESwitchDescription(
+    key=KEY_LOAD_STATUS,
+    name="DC Load",
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the Renogy BLE switches."""
+    LOGGER.debug("Setting up Renogy BLE switches for entry: %s", config_entry.entry_id)
+
+    renogy_data = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = renogy_data["coordinator"]
+
+    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
+    LOGGER.debug("Setting up switches for device type: %s", device_type)
+
+    if device_type != DeviceType.CONTROLLER.value:
+        LOGGER.debug(
+            "Skipping load switch setup for non-controller device type: %s", device_type
+        )
+        return
+
+    if not coordinator.device or not is_device_name_ready(
+        coordinator.device.name, device_type
+    ):
+        LOGGER.debug("Creating switches without waiting for a resolved device name")
+
+    device = coordinator.device
+    if device and not is_device_name_ready(device.name, device_type):
+        device = None
+
+    async_add_entities([RenogyLoadSwitch(coordinator, device, device_type)])
+
+
+class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
+    """Representation of a Renogy DC load switch."""
+
+    entity_description: RenogyBLESwitchDescription
+    coordinator: RenogyActiveBluetoothCoordinator
+    # Friendly name = device name + entity name, so UI device renames cascade.
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RenogyActiveBluetoothCoordinator,
+        device: Optional[RenogyBLEDevice],
+        device_type: str = DEFAULT_DEVICE_TYPE,
+    ) -> None:
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self.entity_description = LOAD_SWITCH
+        self._device = device
+        self._device_type = device_type
+        self._attr_is_on = None
+
+        device_model = f"Renogy {device_type.capitalize()}"
+        if device and device.parsed_data and "model" in device.parsed_data:
+            device_model = device.parsed_data["model"]
+
+        if device:
+            self._attr_unique_id = f"{device.address}_{self.entity_description.key}"
+            self._attr_name = cast("str | None", self.entity_description.name)
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, device.address)},
+                name=device.name,
+                manufacturer=ATTR_MANUFACTURER,
+                model=device_model,
+                hw_version=f"BLE Address: {device.address}",
+                sw_version=device_type.capitalize(),
+            )
+        else:
+            self._attr_unique_id = (
+                f"{coordinator.address}_{self.entity_description.key}"
+            )
+            self._attr_name = cast("str | None", self.entity_description.name)
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, coordinator.address)},
+                name=f"Renogy {device_type.capitalize()}",
+                manufacturer=ATTR_MANUFACTURER,
+                model=device_model,
+                hw_version=f"BLE Address: {coordinator.address}",
+                sw_version=device_type.capitalize(),
+            )
+
+    @property
+    def suggested_object_id(self) -> str | None:
+        """Preserve the legacy entity component before name resolution."""
+        if self._device is None:
+            return f"Renogy {self._attr_name}"
+        return super().suggested_object_id
+
+    def _update_device_metadata(self, device: RenogyBLEDevice) -> None:
+        """Refresh entity metadata from the latest device details."""
+        device_model = f"Renogy {self._device_type.capitalize()}"
+        if device.parsed_data and "model" in device.parsed_data:
+            device_model = device.parsed_data["model"]
+
+        self._attr_unique_id = f"{device.address}_{self.entity_description.key}"
+        self._attr_name = cast("str | None", self.entity_description.name)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, device.address)},
+            name=device.name,
+            manufacturer=ATTR_MANUFACTURER,
+            model=device_model,
+            hw_version=f"BLE Address: {device.address}",
+            sw_version=self._device_type.capitalize(),
+        )
+
+    @property
+    def device(self) -> Optional[RenogyBLEDevice]:
+        """Get the current device - either stored or from coordinator."""
+        coordinator_device = getattr(self.coordinator, "device", None)
+        if coordinator_device and (
+            self._device is None
+            or self._device is not coordinator_device
+            or self._device.name != coordinator_device.name
+        ):
+            self._device = coordinator_device
+            self._update_device_metadata(self._device)
+            LOGGER.debug("Updated device info with name: %s", self._device.name)
+
+        return self._device
+
+    @property
+    def available(self) -> bool:
+        """Return if the switch is available."""
+        return is_entity_available(self.coordinator, self._device)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if the load is on."""
+        value = self._get_load_status()
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value.lower() == "on"
+        return bool(value)
+
+    def _get_load_status(self) -> Any:
+        device = self.device
+        if device and device.parsed_data and KEY_LOAD_STATUS in device.parsed_data:
+            return device.parsed_data.get(KEY_LOAD_STATUS)
+        if isinstance(self.coordinator.data, dict):
+            return self.coordinator.data.get(KEY_LOAD_STATUS)
+        return None
+
+    async def async_turn_on(self, **_kwargs: Any) -> None:
+        """Turn the load on."""
+        await self._async_set_state(True)
+
+    async def async_turn_off(self, **_kwargs: Any) -> None:
+        """Turn the load off."""
+        await self._async_set_state(False)
+
+    async def _async_set_state(self, state: bool) -> None:
+        """Set load state and refresh entity state."""
+        success = await self.coordinator.async_set_load_state(state)
+        if success:
+            self._attr_is_on = state
+            self.async_write_ha_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.device
+        self._attr_is_on = None
+        self.async_write_ha_state()
