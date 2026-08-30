@@ -1,6 +1,6 @@
-# Contributing to renogy-ha
+# Contributing to Renogy BLE
 
-Thanks for contributing.
+Thanks for contributing to the Home Assistant integration.
 
 Start here:
 
@@ -9,13 +9,13 @@ Start here:
 
 ## Scope and Boundaries
 
-`renogy-ha` is the Home Assistant integration layer.
+`ha-renogy-ble` is the Home Assistant integration layer. The Home Assistant domain is `renogy` and should not be renamed.
 
 - Include Home Assistant lifecycle, config flow, coordinator/entity behavior, and platform wiring changes here.
-- Keep BLE transport, Modbus command construction, and response parsing logic in `renogy-ble`.
-- `renogy-ha` depends on `renogy-ble`; dependency direction should remain one-way.
+- Keep BLE transport, Modbus command construction, and response parsing logic in the `renogy-ble` Python dependency.
+- The Home Assistant integration depends on `renogy-ble`; dependency direction should remain one-way.
 
-If your fix is protocol/parsing/BLE-transport specific, implement it in `renogy-ble` and then bump/update usage here as needed.
+If a fix is protocol/parsing/BLE-transport specific, implement it in the `renogy-ble` library and then bump the dependency here as needed.
 
 ## Development Setup
 
@@ -33,24 +33,21 @@ Before opening a PR, run:
 3. `uv run ty check . --output-format=github`
 4. `uv run pytest tests`
 
-## Documentation
-
-- Use Markdown.
-- Put project documentation under `docs/`.
+GitHub Actions also runs HACS validation and Home Assistant Hassfest.
 
 ## Pull Requests
 
 - Add or update tests for behavior changes.
 - Keep changes focused and clearly scoped.
 - Use conventional commit prefixes (`fix:`, `feat:`, `docs:`, etc.).
-- Do not edit `CHANGELOG.md` or manually update the version (release automation handles it).
+- Do not manually edit `custom_components/renogy/manifest.json` solely to bump its version; release automation synchronizes it from the GitHub release sequence.
 
 ## Reporting Issues
 
-When filing a bug, include:
+Use https://github.com/danfulton72/ha-renogy-ble/issues and include:
 
 - Home Assistant version
-- Integration version
-- Device model and BT module (BT-1/BT-2)
-- Relevant Home Assistant logs (debug logs help)
+- Renogy BLE integration version
+- Device model and BT module (BT-1/BT-2), if applicable
+- Relevant Home Assistant debug logs
 - Clear reproduction steps

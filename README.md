@@ -1,14 +1,14 @@
 # Renogy BLE Integration for Home Assistant
 
-![Tests](https://github.com/IAmTheMitchell/renogy-ha/actions/workflows/test.yml/badge.svg)
-![Hassfest](https://github.com/IAmTheMitchell/renogy-ha/actions/workflows/hassfest.yml/badge.svg)
-![HACS](https://github.com/IAmTheMitchell/renogy-ha/actions/workflows/validate.yml/badge.svg)
-![Release](https://github.com/IAmTheMitchell/renogy-ha/actions/workflows/release.yml/badge.svg)
+[![Tests](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/test.yml/badge.svg)](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/test.yml)
+[![Hassfest](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/hassfest.yml/badge.svg)](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/hassfest.yml)
+[![HACS](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/validate.yml/badge.svg)](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/validate.yml)
+[![Release](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/release.yml/badge.svg)](https://github.com/danfulton72/ha-renogy-ble/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/danfulton72/ha-renogy-ble)](https://github.com/danfulton72/ha-renogy-ble/releases/latest)
 
-This custom Home Assistant integration provides monitoring and control
-capabilities for Renogy devices over Bluetooth Low Energy (BLE). Charge
-controllers and DCC chargers use BT-1 or BT-2 modules. Supported batteries,
-inverters, and Smart Shunt 300 devices advertise directly over BLE.
+**Renogy BLE** is a custom Home Assistant integration for monitoring and controlling supported Renogy devices over Bluetooth Low Energy (BLE). The Home Assistant integration domain remains `renogy` for compatibility with existing installations.
+
+Charge controllers and DCC chargers use BT-1 or BT-2 modules. Supported batteries, inverters, and Smart Shunt 300 devices advertise directly over BLE.
 
 > **Disclaimer:** This integration is experimental software. Use caution when controlling electrical loads, and ensure any connected equipment is properly rated and protected.
 
@@ -30,206 +30,94 @@ Expected to work, but not yet confirmed:
 
 - Renogy Adventurer
 
-Support is protocol-family based, so behavior can vary by model and firmware.
-When reporting a problem, include the exact model, Bluetooth name, integration
-debug logs, and a comparison with the Renogy app.
+Support is protocol-family based, so behavior can vary by model and firmware. When reporting a problem, include the exact model, Bluetooth name, integration debug logs, and a comparison with the Renogy app.
 
 ## Features
 
-- Automatic discovery of Renogy BLE devices
-- Automatic discovery of supported Renogy battery advertisements
-- Automatic discovery of Renogy inverter devices advertising `RNGRIU*`
-- Automatic discovery of Smart Shunt 300 devices advertising `RTMShunt300*`
-- Monitor battery status (voltage, current, temperature, charge state)
-- Monitor solar panel (PV) performance metrics
-- Monitor load status and statistics
-- Monitor inverter AC output, frequency, load power, temperature, and diagnostic metadata
-- Monitor Smart Shunt voltage, current, power, state of charge, and derived energy
-- Turn the DC load output on/off (supported controllers only)
-- Configure supported DCC charging parameters, battery type, and maximum current
-- Monitor controller information
-- Telemetry exposed as Home Assistant sensors
-- Energy dashboard compatible sensors
-- Configurable polling interval
+- Automatic discovery of supported Renogy BLE devices
+- Battery, controller, charger, inverter, and Smart Shunt telemetry
+- Energy dashboard compatible sensors where applicable
+- DC load control on supported controllers
+- Supported DCC charger configuration
+- Configurable polling and connection modes
 - Automatic error recovery
 
 ## Prerequisites
 
-- Home Assistant instance (version 2026.3 or newer)
-- A compatible Bluetooth adapter on your Home Assistant host device
+- Home Assistant 2026.3 or newer
+- A compatible Bluetooth adapter or Bluetooth proxy
 - Bluetooth discovery enabled in Home Assistant
 
-## Hardware
+## Installation with HACS
 
-_Includes Amazon affiliate links which provide a small commission to support this project._
+Until this repository is included in the HACS default catalog, add it as a custom repository:
 
-- Compatible Renogy device (see above)
-  - Charge controllers and DCC chargers require a [BT-1](https://amzn.to/4pq4csm) or [BT-2](https://amzn.to/4iTNSO8) Bluetooth module.
-  - Supported Renogy batteries use their built-in BLE radio.
-  - Renogy inverters advertise directly over BLE as `RNGRIU*`.
-  - Smart Shunt 300 devices use their built-in BLE radio and do not require a BT-1 or BT-2 dongle.
-  - Make sure to purchase the correct module for your device. Different devices use different ports.
-- Bluetooth radio for Home Assistant
-  - [ESP32 for Bluetooth proxy](https://amzn.to/4lSBHkV) (Recommended)
-  - [USB Bluetooth adapter](https://amzn.to/4lsxDrU)
+1. Open HACS in Home Assistant.
+2. Open the HACS menu and choose **Custom repositories**.
+3. Add `https://github.com/danfulton72/ha-renogy-ble` with category **Integration**.
+4. Search for **Renogy BLE** and install it.
+5. Restart Home Assistant.
+6. Go to **Settings > Devices & services > Add Integration**, search for **Renogy BLE**, and complete setup.
 
-## Installation
+## Manual Installation
 
-This integration can be installed via HACS (Home Assistant Community Store).
-
-1. Ensure you have [HACS](https://hacs.xyz/) installed
-2. Search for "Renogy" in the HACS store and install it
-3. Restart Home Assistant
+Copy `custom_components/renogy` into your Home Assistant configuration directory as `custom_components/renogy`, restart Home Assistant, then add **Renogy BLE** from **Settings > Devices & services**.
 
 ## Configuration
 
-The integration is configurable through the Home Assistant UI after installation:
+The integration is configured through the Home Assistant UI. Device options include polling interval and, for supported devices, connection mode.
 
-1. Go to Settings > Devices & Services
-2. Click the "+ Add Integration" button
-3. Search for "Renogy" and select it
-4. The integration will automatically start scanning for devices
+- **Polling Interval:** 10–600 seconds, default 60 seconds.
+- **Connection Mode:** Smart Shunt 300 supports `sustained` and `intermittent`; batteries, controllers, DCC chargers, and inverters support `intermittent` and `persistent_session`.
+- See [Connection modes](docs/connection-modes.md) for details.
 
-### Advanced Configuration Options
+## Sensors and Controls
 
-- **Polling Interval**: Adjust how frequently the device is polled (10-600 seconds, default: 60)
-  - Can be configured per device in the device settings
-  - Lower values provide more frequent updates but may impact battery life
-- **Connection Mode**: Starting in `0.6.0`, devices expose connection mode options in the config entry options flow
-  - Smart Shunt 300 devices support `sustained` and `intermittent`
-  - Batteries, controllers, DCC chargers, and inverters support `intermittent` and `persistent_session`
-  - See [docs/connection-modes.md](docs/connection-modes.md) for behavior and recommendations
+Depending on the device, Renogy BLE exposes battery voltage/current/power/temperature/state of charge, solar PV metrics, load telemetry, inverter AC metrics, controller information, Smart Shunt metrics, energy statistics, DC load switching, and supported DCC configuration entities.
 
-## Sensors
-
-The integration provides the following sensor groups:
-
-### Controller and DCC Battery Sensors
-
-- Voltage
-- Current
-- Temperature
-- State of Charge
-- Charging Status
-
-### Renogy Battery Sensors
-
-- Voltage
-- Current
-- Power
-- Temperature
-- State of Charge
-- Remaining and rated capacity
-- Cycle count
-- Cell count and voltage diagnostics, when reported
-- Protection status, when the protocol exposes it
-
-### Solar Panel (PV) Sensors
-
-- Voltage
-- Current
-- Power
-- Daily Generation
-- Total Generation
-
-### Load Sensors
-
-- Status
-- Current Draw
-- Power Consumption
-- Daily Usage
-
-### Inverter Sensors
-
-- Battery Voltage
-- AC Output Voltage
-- AC Output Current
-- AC Output Frequency
-- Input Frequency
-- Load Active Power
-- Load Apparent Power
-- Temperature
-- Device ID
-- Model
-
-### DC Load Control
-
-Some Renogy charge controllers expose a controllable DC load output. This integration creates a `switch` entity that can turn the DC load on or off.
-
-> **Caution:** This feature is experimental. Write commands may be interpreted differently by devices or firmware versions, which could cause unexpected load behavior. Use appropriate fusing and wiring, and verify behavior in a safe test setup before relying on it.
-
-### DCC Configuration
-
-Supported DC-DC chargers also expose configuration entities for battery type,
-maximum charging current, charging voltages, protection thresholds, charge
-timing, temperature compensation, and solar cutoff current.
-
-> **Caution:** DCC configuration writes change charger behavior. Confirm that
-> every value is appropriate for the connected battery and electrical system
-> before applying it.
-
-### Controller Info
-
-- Temperature
-- Device Information
-- Operating Status
-
-### Smart Shunt Sensors
-
-- Shunt Voltage
-- Shunt Current
-- Shunt Power
-- Shunt State of Charge
-- Shunt Charge Status
-- Shunt Energy
-
-> **Caution:** Shunt support is experimental.
-
-All sensors are automatically added to Home Assistant's Energy Dashboard where applicable.
+> **Caution:** Write operations can change charger or load behavior. Verify values and electrical protection before relying on control features.
 
 ## Troubleshooting
 
 ### Enable Debug Logging
 
-It can be extremely helpful to enable debug logging when troubleshooting issues.
-
-1. Open your Home Assistant instance and navigate to the [Renogy integration](https://my.home-assistant.io/redirect/integration/?domain=renogy)
-2. Select "Enable debug logging"
-3. Navigate to the [Home Assistant Core logs](https://my.home-assistant.io/redirect/logs/?provider=core)
-4. Select the three dots in the top right and choose "Show raw logs"
+1. Open the [Renogy BLE integration](https://my.home-assistant.io/redirect/integration/?domain=renogy).
+2. Select **Enable debug logging**.
+3. Reproduce the issue.
+4. Download or copy the relevant Home Assistant logs.
 
 ### Device Not Found
 
-1. Verify the device is supported by this integration
-2. For controllers or DCC chargers, confirm a BT-1 or BT-2 module is installed
-3. For batteries, confirm the advertisement matches one of the documented
-   battery names or manufacturer IDs
-4. For inverter devices, confirm the BLE name starts with `RNGRIU`
-5. For Smart Shunt 300 devices, confirm the BLE name starts with `RTMShunt300`
-6. Check that Bluetooth is enabled on your Home Assistant host
-7. Ensure the device is within range (typically 10m/33ft)
-8. Restart the Bluetooth adapter
+- Verify the device family is supported.
+- Confirm BT-1/BT-2 hardware where required.
+- Confirm Bluetooth is enabled and the device is in range.
+- For batteries/inverters/shunts, verify the advertised Bluetooth name matches the documented patterns.
+- Restart the Bluetooth adapter or proxy if discovery has stalled.
 
-### Connection Issues
+## Releases and Versioning
 
-- If the device shows as unavailable:
-  1. Check the device is powered on
-  2. Verify it's within range
-  3. Check Home Assistant logs for specific error messages
-  4. Try reducing the polling interval temporarily for testing
+GitHub releases are the authoritative version source for this repository. Every commit pushed to `main` is released automatically using the next patch SemVer tag (`vX.Y.Z`). The release workflow synchronizes that GitHub version into `custom_components/renogy/manifest.json` before creating the tag and GitHub release. HACS therefore sees the GitHub release version and the Home Assistant manifest version in sync.
 
-### Data Accuracy
+The initial detached repository starts at `v0.9.0`; subsequent `main` commits advance the patch version automatically.
 
-- Verify your device firmware is up to date
-- Check the Renogy app to compare readings
-- Note that some values (like daily totals) reset at midnight
-- Smart Shunt energy is integration-derived rather than read directly from the device
+## Development
+
+This repository uses `uv`, pytest, Ruff, and `ty`.
+
+```bash
+uv sync --all-groups
+uv run ruff format .
+uv run ruff check . --output-format=github
+uv run ty check . --output-format=github
+uv run pytest tests
+```
+
+Pull requests and pushes are validated with HACS and Home Assistant Hassfest.
 
 ## Support
 
-- For bugs, please open an issue on GitHub
-- Include Home Assistant logs and your device model information
+Report bugs and feature requests at [GitHub Issues](https://github.com/danfulton72/ha-renogy-ble/issues). Include your Home Assistant version, Renogy BLE version, exact device model/Bluetooth name, and relevant debug logs.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.

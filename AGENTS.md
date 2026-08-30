@@ -1,68 +1,46 @@
 # Background
 
-renogy-ha is a Home Assistant integration written in Python and distributed via HACS. Its purpose is to allow Home Assistant to connect to Renogy devices over Bluetooth low energy and send and receive modbus commands. renogy-ha depends on the renogy-ble library to connect to the devices, send commands, and parse responses. renogy-ha itself is the "glue-layer" between Home Assistant and the renogy-ble library.
+ha-renogy-ble is the Renogy BLE custom integration for Home Assistant, written in Python and distributed through HACS. It connects Home Assistant to supported Renogy devices over Bluetooth Low Energy. The Home Assistant integration domain is `renogy` and is intentionally stable for compatibility.
+
+The integration depends on the `renogy-ble` Python library for BLE transport, Modbus command construction, and response parsing. This repository is the Home Assistant glue layer.
 
 # Documentation
 
-- Use Markdown for all documentation.
-- Place documentation in the `docs/` directory.
+- Use Markdown for documentation.
+- Place project documentation in the `docs/` directory.
 
 # Code Style
 
-- Add comments to code when it may be unclear what the code does or how it functions.
+- Add comments when code intent is not obvious.
 - Comments should be full sentences and end with a period.
-- Maintainable and understandable code is preferred over complex code.
+- Prefer maintainable, understandable code over unnecessary complexity.
 
 # Python
 
-- Use uv to manage Python and all Python packages.
-- Use 'uv add [package_name]' instead of 'uv pip install [package_name]'.
+- Use `uv` to manage Python and packages.
+- Use `uv add <package>` instead of `uv pip install <package>`.
 
 # Testing
 
-- Use pytest for Python testing.
-- Ensure all code is formatted and linted with Ruff.
+- Use pytest for Python tests.
+- Format and lint with Ruff.
+- Type-check with `ty`.
 
-# Files
+# Releases
 
-- Do not create binary files, such as Lambda zip files.
-- Do not modify CHANGELOG.md. This is handled by CI.
+- GitHub releases are the authoritative version source.
+- Every commit pushed to `main` is released as the next patch SemVer version.
+- CI synchronizes the release version into `custom_components/renogy/manifest.json`.
+- Do not manually bump the manifest version as part of normal feature/fix commits.
 
 # Commits
 
-- Use conventional commits for all changes
-  - Prefix all commit messages with fix:; feat:; build:; chore:; ci:; docs:; style:; refactor:; perf:; or test: as appropriate.
+Use conventional commit prefixes such as `fix:`, `feat:`, `build:`, `chore:`, `ci:`, `docs:`, `style:`, `refactor:`, `perf:`, or `test:`.
 
 # Before Checking In Code
 
-- Fix all code formatting and quality issues in the entire codebase.
-- Ensure all new code is covered by appropriate unit tests.
-
-## Python
-
-Fix all Python formatting and linting issues.
-
-### Steps:
-
-1. **Format with ruff**: `uv run ruff format .`
-2. **Lint with ruff**: `uv run ruff check . --output-format=github`
-3. **Type check with ty**: `uv run ty check . --output-format=github`
-4. **Run unit tests**: `uv run pytest tests`
-5. **Repeat 1-4 until all steps pass on a single run**
-
-## General Process:
-
-1. Run automated formatters first.
-2. Fix remaining linting issues manually.
-3. Resolve type checking errors.
-4. Verify all tests pass with no errors.
-5. Review changes before committing.
-
-## Common Issues:
-
-- Import order conflicts between tools
-- Line length violations
-- Unused imports/variables
-- Type annotation requirements
-- Missing return types
-- Inconsistent quotes/semicolons
+1. `uv run ruff format .`
+2. `uv run ruff check . --output-format=github`
+3. `uv run ty check . --output-format=github`
+4. `uv run pytest tests`
+5. Repeat until all checks pass on a single run.
