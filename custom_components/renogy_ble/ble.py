@@ -1061,14 +1061,11 @@ class RenogyActiveBluetoothCoordinator(
         ensure_session_ready = getattr(self._ble_client, "_ensure_session_ready", None)
         read_modbus_register = getattr(self._ble_client, "_read_modbus_register", None)
         close_session = getattr(self._ble_client, "_close_session", None)
-        if not all(
-            callable(method)
-            for method in (
-                prepare_session,
-                ensure_session_ready,
-                read_modbus_register,
-                close_session,
-            )
+        if (
+            not callable(prepare_session)
+            or not callable(ensure_session_ready)
+            or not callable(read_modbus_register)
+            or not callable(close_session)
         ):
             self.logger.debug(
                 "Installed renogy-ble does not expose the session helpers needed "
@@ -1076,17 +1073,28 @@ class RenogyActiveBluetoothCoordinator(
             )
             return {}
 
-        session = await prepare_session(device)
+        prepare_session_fn = cast(
+            Callable[[RenogyBLEDevice], Awaitable[Any]], prepare_session
+        )
+        ensure_session_ready_fn = cast(
+            Callable[[RenogyBLEDevice, Any], Awaitable[None]], ensure_session_ready
+        )
+        read_modbus_register_fn = cast(
+            Callable[..., Awaitable[bytes | None]], read_modbus_register
+        )
+        close_session_fn = cast(Callable[..., Awaitable[None]], close_session)
+
+        session = await prepare_session_fn(device)
         session_lock = getattr(session, "lock", None)
         if session_lock is None:
-            await close_session(device.address, device.name, session, remove=True)
+            await close_session_fn(device.address, device.name, session, remove=True)
             return {}
 
         updates: dict[str, int | float] = {}
         remove_session = False
         async with session_lock:
             try:
-                await ensure_session_ready(device, session)
+                await ensure_session_ready_fn(device, session)
                 client = getattr(session, "client", None)
                 if client is None:
                     raise RuntimeError("BLE session is not connected")
@@ -1107,7 +1115,7 @@ class RenogyActiveBluetoothCoordinator(
                     if index > 0:
                         await asyncio.sleep(RIV_INVERTER_INTER_COMMAND_DELAY)
 
-                    response = await read_modbus_register(
+                    response = await read_modbus_register_fn(
                         session,
                         device_id=INVERTER_DEVICE_ID,
                         function_code=0x03,
@@ -1147,7 +1155,7 @@ class RenogyActiveBluetoothCoordinator(
                     != NonShuntConnectionMode.PERSISTENT_SESSION.value
                 ):
                     try:
-                        await close_session(
+                        await close_session_fn(
                             device.address,
                             device.name,
                             session,
