@@ -29,10 +29,10 @@ from .const import (
     LOGGER,
     DeviceType,
 )
-from .device_name import has_real_device_name
+from .device_name import detect_device_type_from_model, has_real_device_name
 
 if TYPE_CHECKING:
-    from .ble import RenogyBLEDevice
+    from .ble import RenogyActiveBluetoothCoordinator, RenogyBLEDevice
 
 PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SWITCH]
 
@@ -119,9 +119,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "initialized_devices": set(),
     }
 
-    # Start discovery and perform the first refresh before forwarding platforms.
-    # Inverter controls are model-specific; this ensures number/select/switch
-    # setup sees the reported RIV model instead of an empty model value.
+    # Perform a synchronous first read before async_start(). async_start() itself
+    # schedules a refresh, so starting first can race the awaited refresh and cause
+    # setup to continue before the model has arrived.
+    LOGGER.info("Requesting initial refresh for Renogy BLE device %s", device_address)
+    try:
+        await coordinator.async_request_refresh()
+    except Exception as e:
+        LOGGER.warning("Initial refresh failed for %s: %s", device_address, e)
+
+    # BT-TH is a generic radio module used by several product families. Once the
+    # product model is known, prefer that model-derived type and rebuild the BLE
+    # client so inverter writes use the inverter Modbus device ID (0x20).
+    await _async_reconcile_model_device_type(coordinator)
+
     LOGGER.info("Starting coordinator for Renogy BLE device %s", device_address)
     try:
         stop_func = coordinator.async_start()
@@ -129,16 +140,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as e:
         LOGGER.error("Error starting coordinator for %s: %s", device_address, e)
 
-    LOGGER.info("Requesting initial refresh for Renogy BLE device %s", device_address)
-    try:
-        await coordinator.async_request_refresh()
-    except Exception as e:
-        LOGGER.warning("Initial refresh failed for %s: %s", device_address, e)
-
     LOGGER.info("Setting up platforms for Renogy BLE device %s", device_address)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
+
+
+async def _async_reconcile_model_device_type(
+    coordinator: RenogyActiveBluetoothCoordinator,
+) -> None:
+    """Resolve a generic BLE entry to the product type reported by its model."""
+    if not isinstance(coordinator.data, dict):
+        return
+
+    model = coordinator.data.get("model")
+    detected_type = detect_device_type_from_model(model)
+    if detected_type is None or detected_type == coordinator.device_type:
+        return
+
+    previous_type = coordinator.device_type
+    LOGGER.info(
+        "Resolved Renogy device %s from configured type '%s' to '%s' using model %s",
+        coordinator.address,
+        previous_type,
+        detected_type,
+        model,
+    )
+
+    old_client = coordinator._ble_client
+    close_client = getattr(old_client, "close", None)
+    if callable(close_client):
+        try:
+            await close_client()
+        except Exception:
+            LOGGER.debug(
+                "Unable to close previous BLE client while changing %s to %s",
+                coordinator.address,
+                detected_type,
+                exc_info=True,
+            )
+
+    coordinator.device_type = detected_type
+    if coordinator.device is not None:
+        coordinator.device.device_type = detected_type
+    coordinator._ble_client = coordinator._build_ble_client_for_type(detected_type)
 
 
 def _resolve_setting(entry: ConfigEntry, key: str, default: int) -> int:
