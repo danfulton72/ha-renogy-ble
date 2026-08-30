@@ -1,0 +1,25 @@
+name: Apply feedback fix v2
+
+on:
+  push:
+    branches:
+      - fix/riv-external-control-feedback
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/riv-external-control-feedback
+      - run: python tools/apply_feedback_fix_v2.py
+      - run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "danfulton72"
+          git config user.email "42965092+danfulton72@users.noreply.github.com"
+          git add custom_components/renogy_ble/ble.py
+          git commit -m "fix: preserve manual refresh listener semantics"
+          git push
