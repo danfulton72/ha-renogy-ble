@@ -356,8 +356,7 @@ class RenogyActiveBluetoothCoordinator(
                 error_traceback,
             )
             self._record_poll_availability(False, err)
-
-        self.async_update_listeners()
+            self.async_update_listeners()
 
     def async_add_listener(
         self, update_callback: Callable[[], None], context: Any = None
@@ -1318,7 +1317,10 @@ class RenogyActiveBluetoothCoordinator(
                 except Exception as e:
                     self.logger.error("Error in device data callback: %s", str(e))
 
-            # Update all listeners after successful data acquisition
+            # Bluetooth-driven polls call this method directly, bypassing
+            # async_request_refresh(). Notify our custom entity listeners here so
+            # physical inverter changes are pushed into Home Assistant.
+            self.async_update_listeners()
             return dict(self.device.parsed_data)
 
         else:
@@ -1326,6 +1328,9 @@ class RenogyActiveBluetoothCoordinator(
                 service_info.address if service_info is not None else self.address
             )
             self.logger.info("Failed to retrieve data from %s", failed_address)
+            # Availability changes from direct Bluetooth polls also need to reach
+            # entities; async_request_refresh() is not necessarily involved.
+            self.async_update_listeners()
             return self.data if isinstance(self.data, dict) else {}
 
     @callback
