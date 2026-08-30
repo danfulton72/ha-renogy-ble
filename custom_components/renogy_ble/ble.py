@@ -224,6 +224,8 @@ class RenogyActiveBluetoothCoordinator(
         # Add connection lock to prevent multiple concurrent connections
         self._connection_lock = asyncio.Lock()
         self._connection_in_progress = False
+        # Manual refreshes notify listeners themselves; direct Bluetooth polls do not.
+        self._manual_refresh_in_progress = False
 
         # Warn only once when the reported model contradicts the configured type
         self._model_mismatch_warned = False
@@ -346,6 +348,7 @@ class RenogyActiveBluetoothCoordinator(
             )
 
         try:
+            self._manual_refresh_in_progress = True
             await self._async_poll_device(service_info)
         except Exception as err:
             error_traceback = traceback.format_exc()
@@ -356,6 +359,8 @@ class RenogyActiveBluetoothCoordinator(
                 error_traceback,
             )
             self._record_poll_availability(False, err)
+        finally:
+            self._manual_refresh_in_progress = False
 
         self.async_update_listeners()
 
@@ -1318,7 +1323,11 @@ class RenogyActiveBluetoothCoordinator(
                 except Exception as e:
                     self.logger.error("Error in device data callback: %s", str(e))
 
-            # Update all listeners after successful data acquisition
+            # Bluetooth-driven polls call this method directly, bypassing
+            # async_request_refresh(). Notify our custom entity listeners here so
+            # physical inverter changes are pushed into Home Assistant.
+            if not self._manual_refresh_in_progress:
+                self.async_update_listeners()
             return dict(self.device.parsed_data)
 
         else:
@@ -1326,6 +1335,10 @@ class RenogyActiveBluetoothCoordinator(
                 service_info.address if service_info is not None else self.address
             )
             self.logger.info("Failed to retrieve data from %s", failed_address)
+            # Availability changes from direct Bluetooth polls also need to reach
+            # entities; async_request_refresh() is not necessarily involved.
+            if not self._manual_refresh_in_progress:
+                self.async_update_listeners()
             return self.data if isinstance(self.data, dict) else {}
 
     @callback

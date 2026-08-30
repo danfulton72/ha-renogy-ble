@@ -800,6 +800,72 @@ def test_persistent_load_write_uses_cached_device_when_service_info_expires():
     )
 
 
+def test_direct_poll_notifies_entities_after_external_control_change():
+    """Bluetooth-driven polls must publish physical inverter state changes."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="inverter",
+    )
+    service_info = ble_module.BluetoothServiceInfoBleak(
+        address="AA:BB:CC:DD:EE:FF",
+        name="BT-TH-12345",
+        rssi=-60,
+    )
+    coordinator._update_device_from_service_info(service_info)
+    coordinator.device.parsed_data = {
+        "model": "RIV1230PCH-23S",
+        "inverter_output": 0,
+    }
+    coordinator.data = dict(coordinator.device.parsed_data)
+
+    async def read_external_change(_service_info):
+        coordinator.device.parsed_data["inverter_output"] = 1
+        coordinator.data = dict(coordinator.device.parsed_data)
+        return True
+
+    coordinator._read_device_data = AsyncMock(side_effect=read_external_change)
+    listener = MagicMock()
+    coordinator.async_add_listener(listener)
+
+    result = asyncio.run(coordinator._async_poll_device(service_info))
+
+    assert result["inverter_output"] == 1
+    listener.assert_called_once_with()
+
+
+def test_manual_refresh_does_not_double_notify_after_successful_poll():
+    """Manual refresh should publish one entity update, not two."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="controller",
+    )
+    service_info = ble_module.BluetoothServiceInfoBleak(
+        address="AA:BB:CC:DD:EE:FF",
+        name="BT-TH-12345",
+        rssi=-60,
+    )
+    coordinator._update_device_from_service_info(service_info)
+    coordinator.device.parsed_data = {"battery_voltage": 14.2}
+    coordinator._ble_client.read_device = AsyncMock(
+        return_value=MagicMock(success=True, error=None)
+    )
+    ble_module.bluetooth.async_last_service_info.return_value = service_info
+    listener = MagicMock()
+    coordinator.async_add_listener(listener)
+
+    asyncio.run(coordinator.async_request_refresh())
+
+    listener.assert_called_once_with()
+
+
 def test_sustained_shunt_refresh_does_not_poll():
     """Ensure sustained SHUNT300 refresh requests do not open a competing read."""
     ble_module = _load_ble_module()
