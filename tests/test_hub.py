@@ -16,18 +16,18 @@ def _load_hub_module() -> Any:
     """Load hub.py without executing the integration package initializer."""
     repo_root = Path(__file__).resolve().parents[1]
     custom_components_path = str(repo_root / "custom_components")
-    renogy_path = str(repo_root / "custom_components" / "renogy")
+    renogy_path = str(repo_root / "custom_components" / "renogy_ble")
 
     custom_components_pkg = types.ModuleType("custom_components")
     custom_components_pkg.__path__ = [custom_components_path]
     sys.modules["custom_components"] = custom_components_pkg
 
-    renogy_pkg = types.ModuleType("custom_components.renogy")
+    renogy_pkg = types.ModuleType("custom_components.renogy_ble")
     renogy_pkg.__path__ = [renogy_path]
-    sys.modules["custom_components.renogy"] = renogy_pkg
+    sys.modules["custom_components.renogy_ble"] = renogy_pkg
 
-    sys.modules.pop("custom_components.renogy.hub", None)
-    return importlib.import_module("custom_components.renogy.hub")
+    sys.modules.pop("custom_components.renogy_ble.hub", None)
+    return importlib.import_module("custom_components.renogy_ble.hub")
 
 
 hub_module = _load_hub_module()
