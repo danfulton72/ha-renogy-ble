@@ -23,7 +23,6 @@ from .ble import RenogyActiveBluetoothCoordinator, RenogyBLEDevice
 from .const import (
     ATTR_MANUFACTURER,
     CONF_DEVICE_NAME,
-    CONF_DEVICE_TYPE,
     DEFAULT_DEVICE_TYPE,
     DOMAIN,
     LOGGER,
@@ -228,7 +227,7 @@ async def async_setup_entry(
     """Set up the Renogy BLE number entities."""
     renogy_data = hass.data[DOMAIN][config_entry.entry_id]
     coordinator = renogy_data["coordinator"]
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEFAULT_DEVICE_TYPE)
+    device_type = coordinator.device_type
     model = _coordinator_model(coordinator)
 
     if device_type == DeviceType.DCC.value:
