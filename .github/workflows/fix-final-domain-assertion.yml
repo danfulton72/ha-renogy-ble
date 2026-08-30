@@ -1,0 +1,39 @@
+name: Fix final domain assertion
+
+on:
+  push:
+    branches:
+      - fix/bt-th-riv-inverter-detection
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/bt-th-riv-inverter-detection
+      - name: Fix remaining via_device domain assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/test_hub_sensor.py')
+          text = path.read_text()
+          text = text.replace(
+              '    assert voltage._attr_device_info["via_device"] == (\n        "renogy",\n',
+              '    assert voltage._attr_device_info["via_device"] == (\n        "renogy_ble",\n',
+          )
+          path.write_text(text)
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/fix-final-domain-assertion.yml
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/test_hub_sensor.py .github/workflows/fix-final-domain-assertion.yml
+          git commit -m 'test: use renogy_ble for hub parent device'
+          git push origin HEAD:fix/bt-th-riv-inverter-detection
