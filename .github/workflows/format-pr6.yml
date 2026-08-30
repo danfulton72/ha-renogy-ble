@@ -1,0 +1,44 @@
+name: Format PR6 files
+
+on:
+  push:
+    branches:
+      - fix/bt-th-riv-inverter-detection
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/bt-th-riv-inverter-detection
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.14"
+      - run: uv sync --all-extras --dev
+      - name: Ruff fix and format changed Python files
+        run: |
+          files=(
+            custom_components/renogy_ble/ble.py
+            custom_components/renogy_ble/number.py
+            custom_components/renogy_ble/select.py
+            custom_components/renogy_ble/switch.py
+            tests/test_hub_import.py
+            tests/test_hub_setup.py
+          )
+          uv run ruff check --fix "${files[@]}"
+          uv run ruff format "${files[@]}"
+          uv run ruff check "${files[@]}"
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/format-pr6.yml
+      - name: Commit formatting
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add custom_components/renogy_ble tests .github/workflows/format-pr6.yml
+          git commit -m 'style: satisfy Ruff on PR 6'
+          git push origin HEAD:fix/bt-th-riv-inverter-detection
