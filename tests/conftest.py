@@ -1,3 +1,3 @@
-"""Pytest configuration for the Renogy BLE integration."""
+"""Shared pytest configuration for the Renogy BLE integration."""
 
 from __future__ import annotations
