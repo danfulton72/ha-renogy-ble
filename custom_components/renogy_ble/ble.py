@@ -159,6 +159,9 @@ SHUNT_RECONNECT_MAX_DELAY_SECONDS = 300
 # that has silently stopped notifying.
 SHUNT_DATA_TIMEOUT_SECONDS = 180
 SHUNT_FORCE_UPDATE_INTERVAL_SECONDS = 300
+# Reject implausible Smart Shunt SOC jumps while continuing to publish the
+# rest of a valid payload. This is an absolute percentage-point delta.
+SHUNT_SOC_MAX_JUMP_PERCENTAGE_POINTS = 20.0
 # Bounds for the per-poll BLE timeout derived from the configured scan interval.
 POLL_TIMEOUT_FLOOR_SECONDS = 30.0
 POLL_TIMEOUT_CEILING_SECONDS = 120.0
@@ -853,6 +856,38 @@ class RenogyActiveBluetoothCoordinator(
 
         return should_poll
 
+    def _filter_shunt_soc_jump(self, parsed_data: dict[str, Any]) -> None:
+        """Preserve the last accepted shunt SOC across implausible jumps."""
+        if self.device_type != DeviceType.SHUNT300.value:
+            return
+
+        current_soc = parsed_data.get("shunt_soc")
+        previous_soc = (
+            self.data.get("shunt_soc") if isinstance(self.data, dict) else None
+        )
+        if current_soc is None or previous_soc is None:
+            return
+
+        try:
+            current_value = float(current_soc)
+            previous_value = float(previous_soc)
+        except TypeError, ValueError:
+            return
+
+        delta = abs(current_value - previous_value)
+        if delta <= SHUNT_SOC_MAX_JUMP_PERCENTAGE_POINTS:
+            return
+
+        self.logger.debug(
+            "Ignoring Smart Shunt SOC jump for %s from %.1f%% to %.1f%% "
+            "(%.1f percentage points)",
+            self.address,
+            previous_value,
+            current_value,
+            delta,
+        )
+        parsed_data["shunt_soc"] = previous_soc
+
     def _process_sustained_shunt_notification(self, data: bytes) -> bool:
         """Parse and publish one sustained Smart Shunt notification payload."""
         if (
@@ -887,6 +922,7 @@ class RenogyActiveBluetoothCoordinator(
             int.from_bytes(raw_payload[i : i + 2], "big", signed=False)
             for i in range(0, len(raw_payload), 2)
         ]
+        self._filter_shunt_soc_jump(parsed_data)
 
         changed = any(
             parsed_data.get(key) != self._last_sustained_shunt_data.get(key)
@@ -1307,6 +1343,7 @@ class RenogyActiveBluetoothCoordinator(
                 self._record_poll_availability(success, error)
 
                 if success and device.parsed_data:
+                    self._filter_shunt_soc_jump(device.parsed_data)
                     self.data = dict(device.parsed_data)
                     self.logger.debug("Updated coordinator data: %s", self.data)
                     self._warn_if_model_mismatch()

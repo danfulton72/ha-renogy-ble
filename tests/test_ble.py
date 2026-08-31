@@ -921,6 +921,78 @@ def test_sustained_shunt_notification_ignores_duplicate_payloads():
     assert listener.call_count == 1
 
 
+def test_sustained_shunt_notification_rejects_large_soc_jump():
+    """Ensure SOC jumps over 20 points do not replace the last accepted SOC."""
+    ble_module = _load_ble_module()
+    hass = MagicMock()
+    hass.loop.call_soon_threadsafe = lambda callback: callback()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=hass,
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="shunt300",
+        shunt_connection_mode="sustained",
+    )
+    coordinator.device = MagicMock(parsed_data={})
+    listener = MagicMock()
+    coordinator.async_add_listener(listener)
+
+    payloads = iter(
+        [
+            (
+                b"\x01\x02",
+                {
+                    "shunt_voltage": 13.2,
+                    "shunt_current": 1.5,
+                    "shunt_power": 19.8,
+                    "shunt_soc": 85.0,
+                },
+            ),
+            (
+                b"\x03\x04",
+                {
+                    "shunt_voltage": 13.3,
+                    "shunt_current": 1.6,
+                    "shunt_power": 21.3,
+                    "shunt_soc": 40.0,
+                },
+            ),
+        ]
+    )
+    ble_module.shunt_find_valid_payload_window = MagicMock(
+        side_effect=lambda *_args: next(payloads)
+    )
+
+    with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
+        coordinator._process_sustained_shunt_notification(b"first")
+        coordinator._process_sustained_shunt_notification(b"second")
+
+    assert coordinator.data["shunt_soc"] == 85.0
+    assert coordinator.device.parsed_data["shunt_soc"] == 85.0
+    assert coordinator.data["shunt_voltage"] == 13.3
+    assert listener.call_count == 2
+
+
+def test_shunt_soc_guard_accepts_twenty_point_change():
+    """Ensure an SOC change of exactly 20 percentage points is accepted."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="shunt300",
+        shunt_connection_mode="intermittent",
+    )
+    coordinator.data = {"shunt_soc": 80.0}
+    parsed_data = {"shunt_soc": 60.0}
+
+    coordinator._filter_shunt_soc_jump(parsed_data)
+
+    assert parsed_data["shunt_soc"] == 60.0
+
+
 def test_sustained_shunt_notification_populates_raw_words():
     """Ensure sustained shunt updates expose raw_words for diagnostics."""
     ble_module = _load_ble_module()
