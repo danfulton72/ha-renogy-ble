@@ -948,6 +948,10 @@ class RenogyActiveBluetoothCoordinator(
 
         startup_monotonic = time.monotonic()
         ready_event = asyncio.Event()
+        # Home Assistant's one-time event listener removes itself before invoking
+        # the callback. Track that so cleanup does not try to unsubscribe an
+        # already-consumed listener and raise ValueError during startup.
+        started_listener_fired = False
 
         @callback
         def _async_is_ready(
@@ -970,6 +974,8 @@ class RenogyActiveBluetoothCoordinator(
 
         @callback
         def _async_started(_event: Any) -> None:
+            nonlocal started_listener_fired
+            started_listener_fired = True
             if _async_is_ready():
                 ready_event.set()
 
@@ -1011,7 +1017,9 @@ class RenogyActiveBluetoothCoordinator(
                         self.address,
                     )
         finally:
-            if callable(unsub_started):
+            # async_listen_once removes itself before calling _async_started.
+            # Only unsubscribe when that one-time listener is still pending.
+            if callable(unsub_started) and not started_listener_fired:
                 unsub_started()
             unsub_bluetooth()
             self._shunt_startup_gate_complete = True
@@ -1084,13 +1092,12 @@ class RenogyActiveBluetoothCoordinator(
                     continue
 
                 self._update_device_from_service_info(service_info)
-                if not self._should_attempt_connection():
-                    self.logger.debug(
-                        "Smart Shunt %s is in its unavailable reconnect cooldown",
-                        self.address,
-                    )
-                    await self._async_shunt_backoff_sleep()
-                    continue
+                # Sustained Smart Shunts already own their reconnect cadence via
+                # _async_shunt_backoff_sleep(). Do not also apply the generic
+                # RenogyBLEDevice unavailable cooldown (10 minutes by default):
+                # a fresh connectable advertisement is enough to permit the next
+                # backoff-governed attempt. Layering both cooldowns can strand an
+                # advertising shunt for many minutes after three failures.
                 connect_device = await self._async_prepare_shunt_reconnect(
                     service_info.device
                 )
