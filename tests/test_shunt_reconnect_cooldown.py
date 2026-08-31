@@ -78,3 +78,38 @@ def test_shunt_startup_gate_does_not_remove_fired_one_time_listener() -> None:
     remove_started.assert_not_called()
     remove_bluetooth.assert_called_once()
     assert coordinator._shunt_startup_gate_complete is True
+
+
+def test_shunt_shutdown_waits_for_listener_cancellation_cleanup() -> None:
+    """Shutdown awaits sustained-listener cancellation cleanup."""
+    ble_module = _load_ble_module()
+    coordinator = _coordinator(ble_module, device_type="shunt300")
+    coordinator._ble_client.close = AsyncMock()
+    ble_module.close_stale_connections_by_address = AsyncMock()
+
+    async def _run() -> None:
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+
+        async def _listener() -> None:
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await allow_cleanup.wait()
+                raise
+
+        listener_task = asyncio.create_task(_listener())
+        coordinator._shunt_listener_task = listener_task
+        shutdown_task = asyncio.create_task(coordinator.async_shutdown())
+        await cleanup_started.wait()
+        assert not shutdown_task.done()
+        allow_cleanup.set()
+        await shutdown_task
+
+    asyncio.run(_run())
+    assert coordinator._shunt_listener_task is None
+    coordinator._ble_client.close.assert_awaited_once()
+    ble_module.close_stale_connections_by_address.assert_awaited_once_with(
+        coordinator.address
+    )

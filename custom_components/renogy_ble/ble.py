@@ -14,7 +14,10 @@ from typing import Any, cast
 
 from bleak import BleakClient, BleakError
 from bleak.backends.characteristic import BleakGATTCharacteristic
-from bleak_retry_connector import clear_cache, establish_connection
+from bleak_retry_connector import (
+    close_stale_connections_by_address,
+    establish_connection,
+)
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
     BluetoothChange,
@@ -223,6 +226,7 @@ class RenogyActiveBluetoothCoordinator(
 
         self._ble_client = self._build_ble_client_for_type(device_type)
         self._shunt_listener_task: asyncio.Task[Any] | None = None
+        self._active_shunt_client: Any | None = None
         self._shunt_startup_gate_complete = False
         self._last_sustained_shunt_push = 0.0
         self._last_sustained_shunt_data: dict[str, Any] = {}
@@ -601,7 +605,7 @@ class RenogyActiveBluetoothCoordinator(
 
         try:
             age = max(0.0, time.monotonic() - float(seen_time))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return True
         return age <= RECONNECT_SERVICE_INFO_MAX_AGE_SECONDS
 
@@ -629,8 +633,9 @@ class RenogyActiveBluetoothCoordinator(
             self._unsub_refresh = None
 
         if self._shunt_listener_task is not None:
+            # Keep the task reference until async_shutdown() has awaited
+            # cancellation cleanup so a replacement entry cannot race it.
             self._shunt_listener_task.cancel()
-            self._shunt_listener_task = None
 
         self._async_cancel_bluetooth_subscription()
 
@@ -638,8 +643,43 @@ class RenogyActiveBluetoothCoordinator(
         self._update_listeners = []
 
     async def async_shutdown(self) -> None:
-        """Stop polling and release any persistent BLE sessions."""
+        """Stop polling and fully release BLE sessions before reload."""
         self.async_stop()
+
+        shunt_task = self._shunt_listener_task
+        if shunt_task is not None:
+            try:
+                await asyncio.wait_for(
+                    shunt_task, timeout=SHUNT_DISCONNECT_TIMEOUT_SECONDS
+                )
+            except asyncio.CancelledError:
+                # Expected after async_stop() cancels the sustained listener.
+                pass
+            except TimeoutError:
+                self.logger.debug(
+                    "Timed out waiting for Smart Shunt listener cleanup for %s",
+                    self.address,
+                )
+            finally:
+                if self._shunt_listener_task is shunt_task:
+                    self._shunt_listener_task = None
+
+        active_shunt_client = self._active_shunt_client
+        if active_shunt_client is not None:
+            await self._async_disconnect_shunt_client(active_shunt_client)
+            if self._active_shunt_client is active_shunt_client:
+                self._active_shunt_client = None
+
+        # A cancelled/in-flight BlueZ connection can outlive the BleakClient
+        # object that created it and keep HA's adapter connection slot occupied.
+        try:
+            await close_stale_connections_by_address(self.address)
+        except Exception:  # noqa: BLE001
+            self.logger.debug(
+                "Unable to close stale Smart Shunt connection for %s during shutdown",
+                self.address,
+                exc_info=True,
+            )
 
         close_client = getattr(self._ble_client, "close", None)
         if callable(close_client):
@@ -1024,32 +1064,24 @@ class RenogyActiveBluetoothCoordinator(
             unsub_bluetooth()
             self._shunt_startup_gate_complete = True
 
-    async def _async_prepare_shunt_reconnect(self, existing_device: Any) -> Any | None:
-        """Clear BlueZ device state before a sustained shunt reconnect."""
+    async def _async_prepare_shunt_reconnect(self, _existing_device: Any) -> Any | None:
+        """Close stale connections and refresh the BLE handle before reconnect."""
         try:
-            cache_cleared = await clear_cache(self.address)
+            await close_stale_connections_by_address(self.address)
         except Exception as err:  # noqa: BLE001
+            # Best effort: a fresh Home Assistant Bluetooth handle may still work.
             self.logger.debug(
-                "Failed to clear Smart Shunt BlueZ state for %s before reconnect: %s",
+                "Failed to close stale Smart Shunt connection for %s: %s",
                 self.address,
                 err,
             )
-            return existing_device
-
-        if not cache_cleared:
-            return existing_device
-
-        self.logger.debug(
-            "Cleared Smart Shunt BlueZ state for %s before reconnect",
-            self.address,
-        )
 
         refreshed_device = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
         )
         if refreshed_device is None:
             self.logger.debug(
-                "Smart Shunt %s has not been rediscovered after clearing BlueZ state",
+                "Smart Shunt %s is not connectable after stale-connection cleanup",
                 self.address,
             )
             return None
@@ -1114,6 +1146,7 @@ class RenogyActiveBluetoothCoordinator(
                     self.device.name if self.device is not None else self.address,
                     max_attempts=3,
                 )
+                self._active_shunt_client = client
 
                 def notification_handler(
                     _sender: BleakGATTCharacteristic | int | str, data: bytearray
@@ -1157,8 +1190,13 @@ class RenogyActiveBluetoothCoordinator(
                         self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
                         break
             except asyncio.CancelledError:
-                if client is not None and getattr(client, "is_connected", False):
-                    self._schedule_shunt_disconnect(client)
+                # Disconnect inline so config-entry teardown cannot finish
+                # while BlueZ still owns the sustained shunt connection.
+                if client is not None:
+                    await self._async_disconnect_shunt_client(client)
+                    disconnect_attempted = True
+                if self._active_shunt_client is client:
+                    self._active_shunt_client = None
                 return
             except Exception as err:
                 self._record_poll_availability(False, err)
@@ -1178,6 +1216,9 @@ class RenogyActiveBluetoothCoordinator(
                 and getattr(client, "is_connected", False)
             ):
                 await self._async_disconnect_shunt_client(client)
+
+            if client is not None and self._active_shunt_client is client:
+                self._active_shunt_client = None
 
             if client is not None and not got_live_data:
                 self.logger.debug(

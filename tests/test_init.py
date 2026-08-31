@@ -266,8 +266,8 @@ def test_reload_listener_reloads_entry() -> None:
     hass.config_entries.async_reload.assert_awaited_once_with("entry-1")
 
 
-def test_async_unload_entry_schedules_shutdown() -> None:
-    """Ensure unload stops immediately and schedules shutdown in the background."""
+def test_async_unload_entry_awaits_shutdown() -> None:
+    """Ensure unload awaits coordinator shutdown before dropping entry data."""
     init_module, _ = _load_init_module()
     coordinator = MagicMock(async_shutdown=AsyncMock())
     hass = MagicMock()
@@ -291,11 +291,9 @@ def test_async_unload_entry_schedules_shutdown() -> None:
     assert result is True
     assert init_module.DOMAIN in hass.data
     assert "entry-1" not in hass.data[init_module.DOMAIN]
-    coordinator.async_stop.assert_called_once_with()
-    coordinator.async_shutdown.assert_not_awaited()
-    hass.async_create_task.assert_called_once()
-    shutdown_coro = hass.async_create_task.call_args.args[0]
-    shutdown_coro.close()
+    coordinator.async_stop.assert_not_called()
+    coordinator.async_shutdown.assert_awaited_once()
+    hass.async_create_task.assert_not_called()
 
 
 def test_async_shutdown_coordinator_times_out() -> None:

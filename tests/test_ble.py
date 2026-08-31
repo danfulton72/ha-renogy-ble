@@ -44,6 +44,7 @@ def _install_module_stubs() -> None:
     sys.modules["bleak.backends.characteristic"] = bleak_characteristic_module
     retry_connector_module = cast(Any, types.ModuleType("bleak_retry_connector"))
     retry_connector_module.clear_cache = AsyncMock(return_value=False)
+    retry_connector_module.close_stale_connections_by_address = AsyncMock()
     retry_connector_module.establish_connection = AsyncMock(return_value=BleakClient())
     sys.modules["bleak_retry_connector"] = retry_connector_module
 
@@ -1000,24 +1001,14 @@ def test_sustained_shunt_notification_recovers_from_duplicate_payload_after_erro
     assert coordinator.device.update_availability.call_args_list[-1][0] == (True, None)
 
 
-def test_sustained_shunt_listener_cancellation_skips_disconnect():
-    """Ensure listener cancellation schedules disconnect cleanup on shutdown."""
+def test_sustained_shunt_listener_cancellation_awaits_disconnect():
+    """Ensure listener cancellation releases the active client inline."""
     ble_module = _load_ble_module()
     hass = MagicMock()
     hass.state = ble_module.CoreState.running
-    logger = MagicMock()
-    disconnect_tasks = []
-
-    def _create_background_task(coro, *, name=None):
-        del name
-        task = asyncio.create_task(coro)
-        disconnect_tasks.append(task)
-        return task
-
-    hass.async_create_background_task = _create_background_task
     coordinator = ble_module.RenogyActiveBluetoothCoordinator(
         hass=hass,
-        logger=logger,
+        logger=MagicMock(),
         address="AA:BB:CC:DD:EE:FF",
         scan_interval=30,
         device_type="shunt300",
@@ -1032,20 +1023,21 @@ def test_sustained_shunt_listener_cancellation_skips_disconnect():
     client = MagicMock()
     client.is_connected = True
     client.start_notify = AsyncMock()
-    client.disconnect = AsyncMock(
-        side_effect=AssertionError("disconnect should not be awaited")
-    )
+    client.disconnect = AsyncMock()
     ble_module.establish_connection = AsyncMock(return_value=client)
     original_sleep = ble_module.asyncio.sleep
     ble_module.asyncio.sleep = AsyncMock(side_effect=asyncio.CancelledError())
 
     try:
-        asyncio.run(coordinator._shunt_notification_loop())
+        try:
+            asyncio.run(coordinator._shunt_notification_loop())
+        except asyncio.CancelledError:
+            pass
     finally:
         ble_module.asyncio.sleep = original_sleep
 
-    assert len(disconnect_tasks) == 1
     client.disconnect.assert_awaited_once()
+    assert coordinator._active_shunt_client is None
 
 
 def test_sustained_shunt_notification_handler_logs_and_recovers():
@@ -1244,8 +1236,8 @@ def test_sustained_shunt_listener_waits_for_started_scanner_and_fresh_advertisem
     assert coordinator._shunt_startup_gate_complete is True
 
 
-def test_sustained_shunt_listener_clears_bluez_state_before_reconnect():
-    """Ensure sustained shunt reconnect uses a rediscovered device after cache clear."""
+def test_sustained_shunt_listener_closes_stale_connection_before_reconnect():
+    """Ensure sustained reconnect closes stale address-level connections."""
     ble_module = _load_ble_module()
     hass = MagicMock()
     hass.state = ble_module.CoreState.running
@@ -1271,19 +1263,17 @@ def test_sustained_shunt_listener_clears_bluez_state_before_reconnect():
     client.is_connected = False
     client.start_notify = AsyncMock()
     client.disconnect = AsyncMock()
-
     call_order: list[str] = []
 
-    async def _clear_cache(_address: str) -> bool:
-        call_order.append("clear_cache")
-        return True
+    async def _close_stale(_address: str) -> None:
+        call_order.append("close_stale")
 
     async def _establish_connection(*_args, **_kwargs):
         call_order.append("establish_connection")
         assert _args[1] is refreshed_device
         return client
 
-    ble_module.clear_cache = AsyncMock(side_effect=_clear_cache)
+    ble_module.close_stale_connections_by_address = AsyncMock(side_effect=_close_stale)
     ble_module.establish_connection = AsyncMock(side_effect=_establish_connection)
     original_sleep = ble_module.asyncio.sleep
     ble_module.asyncio.sleep = AsyncMock(side_effect=asyncio.CancelledError())
@@ -1296,16 +1286,18 @@ def test_sustained_shunt_listener_clears_bluez_state_before_reconnect():
     finally:
         ble_module.asyncio.sleep = original_sleep
 
-    assert call_order[:2] == ["clear_cache", "establish_connection"]
-    ble_module.clear_cache.assert_awaited_once_with("AA:BB:CC:DD:EE:FF")
+    assert call_order[:2] == ["close_stale", "establish_connection"]
+    ble_module.close_stale_connections_by_address.assert_awaited_once_with(
+        "AA:BB:CC:DD:EE:FF"
+    )
     ble_module.bluetooth.async_ble_device_from_address.assert_called_once_with(
         hass, "AA:BB:CC:DD:EE:FF", connectable=True
     )
     assert coordinator.device.ble_device is refreshed_device
 
 
-def test_sustained_shunt_listener_waits_for_rediscovery_after_cache_clear():
-    """Ensure sustained shunt reconnect waits for a rediscovered device handle."""
+def test_sustained_shunt_listener_waits_for_connectable_device_after_cleanup():
+    """Ensure reconnect waits until HA has a connectable BLE handle."""
     ble_module = _load_ble_module()
     hass = MagicMock()
     hass.state = ble_module.CoreState.running
@@ -1324,7 +1316,7 @@ def test_sustained_shunt_listener_waits_for_rediscovery_after_cache_clear():
     )
     ble_module.bluetooth.async_last_service_info.return_value = service_info
     ble_module.bluetooth.async_ble_device_from_address.return_value = None
-    ble_module.clear_cache = AsyncMock(return_value=True)
+    ble_module.close_stale_connections_by_address = AsyncMock()
     ble_module.establish_connection = AsyncMock()
     original_sleep = ble_module.asyncio.sleep
     ble_module.asyncio.sleep = AsyncMock(side_effect=asyncio.CancelledError())
@@ -1337,7 +1329,9 @@ def test_sustained_shunt_listener_waits_for_rediscovery_after_cache_clear():
     finally:
         ble_module.asyncio.sleep = original_sleep
 
-    ble_module.clear_cache.assert_awaited_once_with("AA:BB:CC:DD:EE:FF")
+    ble_module.close_stale_connections_by_address.assert_awaited_once_with(
+        "AA:BB:CC:DD:EE:FF"
+    )
     ble_module.establish_connection.assert_not_awaited()
 
 
