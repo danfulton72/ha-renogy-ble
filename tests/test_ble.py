@@ -1143,8 +1143,8 @@ def test_sustained_shunt_listener_error_notifies_entities():
     assert client.disconnect.await_count == 1
 
 
-def test_sustained_shunt_respects_unavailable_retry_cooldown():
-    """A sustained shunt should not reconnect before its cooldown expires."""
+def test_sustained_shunt_bypasses_unavailable_retry_cooldown():
+    """A sustained shunt should reconnect using its own backoff."""
     ble_module = _load_ble_module()
     hass = MagicMock()
     hass.state = ble_module.CoreState.running
@@ -1174,7 +1174,7 @@ def test_sustained_shunt_respects_unavailable_retry_cooldown():
     finally:
         ble_module.asyncio.sleep = original_sleep
 
-    ble_module.establish_connection.assert_not_awaited()
+    ble_module.establish_connection.assert_awaited_once()
 
 
 def test_sustained_shunt_listener_waits_for_started_scanner_and_fresh_advertisement():
