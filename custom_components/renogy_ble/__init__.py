@@ -306,8 +306,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok and entry.entry_id in hass.data[DOMAIN]:
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        coordinator.async_stop()
-        hass.async_create_task(_async_shutdown_coordinator(coordinator, entry.entry_id))
+        # Release the old sustained listener and BlueZ connection before
+        # Home Assistant can create a replacement coordinator.
+        await _async_shutdown_coordinator(coordinator, entry.entry_id)
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
@@ -316,13 +317,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_shutdown_coordinator(
     coordinator: _CoordinatorShutdownProtocol, entry_id: str
 ) -> None:
-    """Attempt coordinator shutdown without blocking entry unload."""
+    """Attempt bounded coordinator shutdown during entry unload."""
     try:
-        await asyncio.wait_for(coordinator.async_shutdown(), timeout=5)
+        await asyncio.wait_for(coordinator.async_shutdown(), timeout=15)
     except TimeoutError:
         LOGGER.warning(
             "Timed out shutting down Renogy BLE coordinator for %s; "
-            "persistent session cleanup will continue in the background",
+            "BLE cleanup may be incomplete",
             entry_id,
         )
     except Exception:
