@@ -100,9 +100,7 @@ RIV_INVERTER_INIT_CHAR_UUID = getattr(
     "INVERTER_INIT_CHAR_UUID",
     "0000ffd4-0000-1000-8000-00805f9b34fb",
 )
-RIV_INVERTER_INIT_DELAY = float(
-    getattr(renogy_ble_module, "INVERTER_INIT_DELAY", 1.0)
-)
+RIV_INVERTER_INIT_DELAY = float(getattr(renogy_ble_module, "INVERTER_INIT_DELAY", 1.0))
 RIV_INVERTER_INTER_COMMAND_DELAY = float(
     getattr(renogy_ble_module, "INVERTER_INTER_COMMAND_DELAY", 0.3)
 )
@@ -151,7 +149,25 @@ RIV_CONTROL_READ_SPECS: tuple[
 )
 
 SHUNT_RECONNECT_DELAY_SECONDS = 10
+# Cap on the exponential backoff applied after repeated shunt reconnect failures.
+SHUNT_RECONNECT_MAX_DELAY_SECONDS = 300
+# Tear down and reconnect a sustained shunt listener that holds an open link but
+# stops delivering payloads. Without this the loop can idle forever on a peer
+# that has silently stopped notifying.
+SHUNT_DATA_TIMEOUT_SECONDS = 180
 SHUNT_FORCE_UPDATE_INTERVAL_SECONDS = 300
+# Bounds for the per-poll BLE timeout derived from the configured scan interval.
+POLL_TIMEOUT_FLOOR_SECONDS = 30.0
+POLL_TIMEOUT_CEILING_SECONDS = 120.0
+# The interval timer and poll timestamp can differ by a small amount of scheduler
+# jitter. Allow only a fixed one-second early window rather than a percentage of
+# the configured interval, which could otherwise become a full minute at long
+# scan intervals.
+POLL_INTERVAL_JITTER_SECONDS = 1.0
+# Once a device has crossed its failure threshold, cached service info older than
+# this is not proof that it is reachable. Wait for a recent advertisement before
+# trying the stale BLEDevice again.
+RECONNECT_SERVICE_INFO_MAX_AGE_SECONDS = 60.0
 SHUNT_DISCONNECT_TIMEOUT_SECONDS = 5.0
 SHUNT_STARTUP_READY_TIMEOUT_SECONDS = 30.0
 
@@ -224,6 +240,14 @@ class RenogyActiveBluetoothCoordinator(
         # Add connection lock to prevent multiple concurrent connections
         self._connection_lock = asyncio.Lock()
         self._connection_in_progress = False
+
+        # Shared poll bookkeeping. Both the advertisement-driven path and the
+        # timer path consult this so they cannot double-poll each other.
+        self._last_poll_monotonic: float | None = None
+
+        # Sustained shunt listener state: reconnect backoff and data watchdog.
+        self._shunt_reconnect_delay = float(SHUNT_RECONNECT_DELAY_SECONDS)
+        self._last_shunt_payload_monotonic: float | None = None
         # Manual refreshes notify listeners themselves; direct Bluetooth polls do not.
         self._manual_refresh_in_progress = False
 
@@ -320,7 +344,7 @@ class RenogyActiveBluetoothCoordinator(
             return
 
         # If a connection is already in progress, don't start another one
-        if self._connection_in_progress:
+        if self._connection_busy():
             self.logger.debug(
                 "Connection already in progress, skipping refresh request"
             )
@@ -396,6 +420,80 @@ class RenogyActiveBluetoothCoordinator(
         # availability is resolved separately from the device's failure grace.
         self.last_update_success = success
 
+    def _seconds_since_last_poll(self) -> float | None:
+        """Return seconds since the last poll attempt, or None if never polled."""
+        if self._last_poll_monotonic is None:
+            return None
+        return time.monotonic() - self._last_poll_monotonic
+
+    def _mark_poll_started(self) -> None:
+        """Record a poll attempt so both poll drivers share one interval.
+
+        The Bluetooth-driven path and the interval timer both reach
+        ``_read_device_data``. Stamping here is what keeps them from stacking
+        polls on top of each other.
+        """
+        self._last_poll_monotonic = time.monotonic()
+
+    def _connection_busy(self) -> bool:
+        """Return whether a BLE operation is reserved or currently holding the lock."""
+        return self._connection_in_progress or self._connection_lock.locked()
+
+    def _try_reserve_connection(self) -> bool:
+        """Synchronously reserve the next BLE operation if the connection is idle.
+
+        Callers run on the Home Assistant event loop, so setting the reservation
+        flag before the next await closes the check-then-acquire race that would
+        otherwise let two operations both queue on ``_connection_lock``.
+        """
+        if self._connection_busy():
+            return False
+        self._connection_in_progress = True
+        return True
+
+    def _release_connection_reservation(self) -> None:
+        """Release a connection reservation after an operation finishes."""
+        self._connection_in_progress = False
+
+    def _poll_timeout(self) -> float:
+        """Return the wall-clock budget for one complete BLE poll.
+
+        The budget covers connection setup, telemetry, and any RIV settings
+        readback. Without a single outer bound, each phase can consume a full
+        timeout and keep ``_connection_lock`` occupied for several intervals.
+        """
+        return min(
+            max(float(self.scan_interval), POLL_TIMEOUT_FLOOR_SECONDS),
+            POLL_TIMEOUT_CEILING_SECONDS,
+        )
+
+    async def _async_reset_client_session(self) -> None:
+        """Drop any pooled BLE session so the next attempt reconnects cleanly."""
+        close_client = getattr(self._ble_client, "close", None)
+        if not callable(close_client):
+            return
+        try:
+            async with asyncio.timeout(SHUNT_DISCONNECT_TIMEOUT_SECONDS):
+                await close_client()
+        except Exception:  # noqa: BLE001
+            self.logger.debug(
+                "Unable to reset BLE session for %s",
+                self.address,
+                exc_info=True,
+            )
+
+    def _should_attempt_connection(self) -> bool:
+        """Return whether the device's reconnect cooldown allows an attempt.
+
+        ``RenogyBLEDevice.should_retry_connection`` restarts the cooldown clock
+        as a side effect of being read, so it must be consulted exactly once per
+        decision. Route every check through here rather than reading the
+        property directly.
+        """
+        if self.device is None:
+            return True
+        return bool(self.device.should_retry_connection)
+
     def _schedule_refresh(self) -> None:
         """Schedule a refresh with the update interval."""
         if self._unsub_refresh:
@@ -409,7 +507,25 @@ class RenogyActiveBluetoothCoordinator(
         self.logger.debug("Scheduled next refresh in %s seconds", self.scan_interval)
 
     async def _handle_refresh_interval(self, _now=None):
-        """Handle a refresh interval occurring."""
+        """Handle a refresh interval occurring.
+
+        The timer is a safety net for when advertisements stop arriving. When
+        the Bluetooth-driven path is keeping up, defer to it instead of adding a
+        second connection attempt per interval.
+        """
+        time_since_poll = self._seconds_since_last_poll()
+        poll_due_after = max(
+            float(self.scan_interval) - POLL_INTERVAL_JITTER_SECONDS,
+            0.0,
+        )
+        if time_since_poll is not None and time_since_poll < poll_due_after:
+            self.logger.debug(
+                "Skipping interval refresh for %s; polled %.1fs ago",
+                self.address,
+                time_since_poll,
+            )
+            return
+
         self.logger.debug("Regular interval refresh for %s", self.address)
         await self.async_request_refresh()
 
@@ -457,16 +573,54 @@ class RenogyActiveBluetoothCoordinator(
             self._unsubscribe_bluetooth = None
 
     def _service_info_for_operation(self) -> BluetoothServiceInfoBleak | None:
-        """Return the latest Home Assistant Bluetooth service info, if available."""
-        return bluetooth.async_last_service_info(self.hass, self.address)
+        """Return usable Home Assistant Bluetooth service info, if available."""
+        service_info = bluetooth.async_last_service_info(self.hass, self.address)
+        if service_info is None:
+            return None
+
+        if (
+            self.device is not None
+            and not self.device.is_available
+            and not self._is_fresh_reconnect_service_info(service_info)
+        ):
+            self.logger.debug(
+                "Ignoring stale Bluetooth service info for unavailable device %s",
+                self.address,
+            )
+            return None
+
+        return service_info
+
+    def _is_fresh_reconnect_service_info(
+        self, service_info: BluetoothServiceInfoBleak
+    ) -> bool:
+        """Return whether service info is recent enough for an unavailable reconnect."""
+        seen_time = getattr(service_info, "time", None)
+        if seen_time is None:
+            return True
+
+        try:
+            age = max(0.0, time.monotonic() - float(seen_time))
+        except (TypeError, ValueError):
+            return True
+        return age <= RECONNECT_SERVICE_INFO_MAX_AGE_SECONDS
 
     def _can_use_cached_device_without_service_info(self) -> bool:
-        """Return whether operations can fall back to the cached BLE device."""
-        return (
-            self.device is not None
-            and self._client_transport_mode()
-            == NonShuntConnectionMode.PERSISTENT_SESSION.value
-        )
+        """Return whether operations can fall back to the cached BLE device.
+
+        The fallback is bounded by the device's failure grace. Once the device
+        has been marked unavailable, the cached ``BLEDevice`` is assumed stale
+        (a rebooted proxy leaves one bound to a scanner that no longer exists),
+        so a fresh advertisement is required before trying again.
+        """
+        if self.device is None:
+            return False
+        if (
+            self._client_transport_mode()
+            != NonShuntConnectionMode.PERSISTENT_SESSION.value
+        ):
+            return False
+        return bool(self.device.is_available)
 
     def async_stop(self) -> None:
         """Stop polling."""
@@ -624,23 +778,30 @@ class RenogyActiveBluetoothCoordinator(
             self.hass, service_info.device.address, connectable=True
         )
         if not connectable_device:
-            self.logger.warning(
+            # A device that has dropped off advertises without being reachable,
+            # so this fires on every advertisement. Keep it at debug.
+            self.logger.debug(
                 "No connectable device found for %s", service_info.address
             )
             return False
 
         # If a connection is already in progress, don't start another one
-        if self._connection_in_progress:
+        if self._connection_busy():
             self.logger.debug("Connection already in progress, skipping poll")
             return False
 
-        # If we've never polled or it's been longer than the scan interval, poll
-        if last_poll is None:
+        # Use our own bookkeeping rather than the `last_poll` argument. The base
+        # coordinator only stamps its clock for polls it drives itself, and the
+        # interval timer calls the poll method directly, so its value does not
+        # account for every poll this coordinator performs.
+        time_since_poll = self._seconds_since_last_poll()
+
+        # If we've never polled, poll now.
+        if time_since_poll is None:
             self.logger.debug("First poll for device %s", service_info.address)
             return True
 
         # Check if enough time has elapsed since the last poll
-        time_since_poll = datetime.now().timestamp() - last_poll
         should_poll = time_since_poll >= self.scan_interval
 
         if should_poll:
@@ -668,6 +829,9 @@ class RenogyActiveBluetoothCoordinator(
 
         raw_payload, parsed_data = maybe_payload
         now = time.monotonic()
+        # Feeds the sustained-listener watchdog; a decoded payload is the only
+        # proof the link is actually carrying data.
+        self._last_shunt_payload_monotonic = now
         if self._shunt_energy_client is not None:
             charged_kwh, discharged_kwh = (
                 self._shunt_energy_client._integrate_energy_totals(
@@ -884,6 +1048,23 @@ class RenogyActiveBluetoothCoordinator(
 
         return refreshed_device
 
+    async def _async_shunt_backoff_sleep(self, reset: bool = False) -> None:
+        """Wait before the next shunt reconnect, backing off on repeat failures.
+
+        A flat retry interval means an out-of-range shunt gets a full connection
+        attempt every few seconds indefinitely, which is a meaningful drain on a
+        shared adapter or proxy. Back off instead, and reset once the device has
+        delivered real data again.
+        """
+        if reset:
+            self._shunt_reconnect_delay = float(SHUNT_RECONNECT_DELAY_SECONDS)
+
+        delay = self._shunt_reconnect_delay
+        self._shunt_reconnect_delay = min(
+            delay * 2, float(SHUNT_RECONNECT_MAX_DELAY_SECONDS)
+        )
+        await asyncio.sleep(delay)
+
     async def _shunt_notification_loop(self) -> None:
         """Maintain a sustained notification listener for Smart Shunt devices."""
         while True:
@@ -892,31 +1073,29 @@ class RenogyActiveBluetoothCoordinator(
             disconnect_attempted = False
             try:
                 await self._async_wait_for_shunt_startup_ready()
-                service_info = bluetooth.async_last_service_info(
-                    self.hass, self.address
-                )
+                service_info = self._service_info_for_operation()
                 if not service_info:
                     self.logger.debug(
                         "No Smart Shunt service info available for %s; retrying in %ss",
                         self.address,
-                        SHUNT_RECONNECT_DELAY_SECONDS,
+                        self._shunt_reconnect_delay,
                     )
-                    await asyncio.sleep(SHUNT_RECONNECT_DELAY_SECONDS)
+                    await self._async_shunt_backoff_sleep()
                     continue
 
                 self._update_device_from_service_info(service_info)
-                if self.device is not None and not self.device.should_retry_connection:
+                if not self._should_attempt_connection():
                     self.logger.debug(
                         "Smart Shunt %s is in its unavailable reconnect cooldown",
                         self.address,
                     )
-                    await asyncio.sleep(SHUNT_RECONNECT_DELAY_SECONDS)
+                    await self._async_shunt_backoff_sleep()
                     continue
                 connect_device = await self._async_prepare_shunt_reconnect(
                     service_info.device
                 )
                 if connect_device is None:
-                    await asyncio.sleep(SHUNT_RECONNECT_DELAY_SECONDS)
+                    await self._async_shunt_backoff_sleep()
                     continue
 
                 if self.device is not None:
@@ -945,8 +1124,31 @@ class RenogyActiveBluetoothCoordinator(
                         )
 
                 await client.start_notify(shunt_notify_char_uuid, notification_handler)
+                self._last_shunt_payload_monotonic = time.monotonic()
                 while getattr(client, "is_connected", True):
                     await asyncio.sleep(5)
+                    # A peer can hold the link open while silently ceasing to
+                    # notify. Without this check the loop idles forever and
+                    # entities keep serving stale values.
+                    last_payload = self._last_shunt_payload_monotonic
+                    if (
+                        last_payload is not None
+                        and time.monotonic() - last_payload
+                        >= SHUNT_DATA_TIMEOUT_SECONDS
+                    ):
+                        self.logger.info(
+                            "No Smart Shunt payload from %s in %ss; reconnecting",
+                            self.address,
+                            SHUNT_DATA_TIMEOUT_SECONDS,
+                        )
+                        self._record_poll_availability(
+                            False,
+                            RuntimeError(
+                                f"Smart Shunt {self.address} stopped sending data"
+                            ),
+                        )
+                        self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
+                        break
             except asyncio.CancelledError:
                 if client is not None and getattr(client, "is_connected", False):
                     self._schedule_shunt_disconnect(client)
@@ -976,15 +1178,21 @@ class RenogyActiveBluetoothCoordinator(
                     self.address,
                 )
 
-            await asyncio.sleep(SHUNT_RECONNECT_DELAY_SECONDS)
+            await self._async_shunt_backoff_sleep(reset=got_live_data)
 
     async def _read_device_data(
         self, service_info: BluetoothServiceInfoBleak | None
     ) -> bool:
         """Read data from a Renogy BLE device using active connection."""
-        async with self._connection_lock:
-            try:
-                self._connection_in_progress = True
+        if not self._try_reserve_connection():
+            self.logger.debug(
+                "Connection already reserved, skipping duplicate BLE read"
+            )
+            return False
+
+        try:
+            async with self._connection_lock:
+                self._mark_poll_started()
                 success = False
                 error: Exception | None = None
                 if service_info is not None:
@@ -1006,37 +1214,58 @@ class RenogyActiveBluetoothCoordinator(
                     device.address,
                 )
 
+                poll_timeout = self._poll_timeout()
+                phase = "telemetry read"
                 try:
-                    read_result = await self._ble_client.read_device(device)
-                except (BleakError, asyncio.TimeoutError) as err:
-                    success = False
-                    error = err
-                    self.logger.debug(
-                        "BLE read failed for %s: %s",
+                    async with asyncio.timeout(poll_timeout):
+                        try:
+                            read_result = await self._ble_client.read_device(device)
+                        except BleakError as err:
+                            success = False
+                            error = err
+                            self.logger.debug(
+                                "BLE read failed for %s: %s",
+                                device.address,
+                                err,
+                            )
+                        else:
+                            success = read_result.success
+                            error = read_result.error
+                            if error is not None and not isinstance(error, Exception):
+                                error = Exception(str(error))
+
+                        # Read the writable RIV settings as part of every successful
+                        # inverter poll. Keep this inside the same wall-clock budget as
+                        # telemetry so a wedged secondary read cannot double the poll
+                        # timeout.
+                        if success and device.parsed_data:
+                            phase = "RIV control state readback"
+                            await self.async_read_riv_control_state()
+                except asyncio.TimeoutError as err:
+                    # A timeout in either phase means the transport may be wedged.
+                    # Preserve successful telemetry if only the optional RIV readback
+                    # timed out, but always drop pooled state before the next poll.
+                    if not success:
+                        error = err
+                    self.logger.info(
+                        "BLE poll for %s exceeded %.0fs during %s; resetting session",
                         device.address,
-                        err,
+                        poll_timeout,
+                        phase,
                     )
-                else:
-                    success = read_result.success
-                    error = read_result.error
-                    if error is not None and not isinstance(error, Exception):
-                        error = Exception(str(error))
+                    await self._async_reset_client_session()
 
                 # Keep entities available until the configured failure threshold.
                 self._record_poll_availability(success, error)
 
-                # Read the writable RIV settings as part of every successful
-                # inverter poll. The upstream library currently reads telemetry and a
-                # subset of setpoints, but not the switch/select state registers.
                 if success and device.parsed_data:
-                    await self.async_read_riv_control_state()
                     self.data = dict(device.parsed_data)
                     self.logger.debug("Updated coordinator data: %s", self.data)
                     self._warn_if_model_mismatch()
 
                 return success
-            finally:
-                self._connection_in_progress = False
+        finally:
+            self._release_connection_reservation()
 
     @staticmethod
     def _decode_modbus_words(response: bytes, word_count: int) -> list[int] | None:
@@ -1141,9 +1370,7 @@ class RenogyActiveBluetoothCoordinator(
 
                     for key, word_offset, scale in fields:
                         raw_value = words[word_offset]
-                        updates[key] = (
-                            raw_value if scale == 1.0 else raw_value * scale
-                        )
+                        updates[key] = raw_value if scale == 1.0 else raw_value * scale
             except Exception as err:  # noqa: BLE001
                 remove_session = True
                 self.logger.debug(
@@ -1210,31 +1437,30 @@ class RenogyActiveBluetoothCoordinator(
 
     async def async_set_load_state(self, state: bool) -> bool:
         """Set the DC load on/off."""
-        if self._connection_in_progress:
+        if not self._try_reserve_connection():
             self.logger.debug("Connection already in progress, skipping load write")
             return False
 
-        service_info = self._service_info_for_operation()
-        if (
-            service_info is None
-            and not self._can_use_cached_device_without_service_info()
-        ):
-            self.logger.error(
-                "No service info available for device %s. Ensure device is within "
-                "range and powered on.",
-                self.address,
-            )
-            return False
-        if service_info is None:
-            self.logger.debug(
-                "No service info available for %s; using cached device context for "
-                "persistent session load write",
-                self.address,
-            )
+        try:
+            service_info = self._service_info_for_operation()
+            if (
+                service_info is None
+                and not self._can_use_cached_device_without_service_info()
+            ):
+                self.logger.error(
+                    "No service info available for device %s. Ensure device is within "
+                    "range and powered on.",
+                    self.address,
+                )
+                return False
+            if service_info is None:
+                self.logger.debug(
+                    "No service info available for %s; using cached device context for "
+                    "persistent session load write",
+                    self.address,
+                )
 
-        async with self._connection_lock:
-            self._connection_in_progress = True
-            try:
+            async with self._connection_lock:
                 if service_info is not None:
                     device = self._update_device_from_service_info(service_info)
                 elif self.device is not None:
@@ -1275,8 +1501,8 @@ class RenogyActiveBluetoothCoordinator(
                     self.async_update_listeners()
 
                 return write_result.success
-            finally:
-                self._connection_in_progress = False
+        finally:
+            self._release_connection_reservation()
 
     async def _async_poll_device(
         self, service_info: BluetoothServiceInfoBleak | None
@@ -1285,13 +1511,15 @@ class RenogyActiveBluetoothCoordinator(
         if self._uses_sustained_shunt_listener():
             return self.data if isinstance(self.data, dict) else {}
 
-        # If a connection is already in progress, don't start another one
-        if self._connection_in_progress:
+        # Fast-path busy check avoids unnecessary cooldown/logging work. The
+        # atomic reservation inside _read_device_data is the final guard against
+        # two callers passing this check in the same event-loop turn.
+        if self._connection_busy():
             self.logger.debug("Connection already in progress, skipping poll")
             return self.data if isinstance(self.data, dict) else {}
 
         self.last_poll_time = datetime.now()
-        if self.device is not None and not self.device.should_retry_connection:
+        if not self._should_attempt_connection():
             self.logger.debug(
                 "Skipping poll for %s during unavailable reconnect cooldown",
                 self.address,
@@ -1309,14 +1537,11 @@ class RenogyActiveBluetoothCoordinator(
                 self.device.address,
             )
 
-        # Read device data using service_info and Home Assistant's Bluetooth API
         success = await self._read_device_data(service_info)
 
         if success and self.device and self.device.parsed_data:
-            # Log the parsed data for debugging
             self.logger.debug("Parsed data: %s", self.device.parsed_data)
 
-            # Call the callback if available
             if self.device_data_callback:
                 try:
                     await self.device_data_callback(self.device)
@@ -1330,16 +1555,15 @@ class RenogyActiveBluetoothCoordinator(
                 self.async_update_listeners()
             return dict(self.device.parsed_data)
 
-        else:
-            failed_address = (
-                service_info.address if service_info is not None else self.address
-            )
-            self.logger.info("Failed to retrieve data from %s", failed_address)
-            # Availability changes from direct Bluetooth polls also need to reach
-            # entities; async_request_refresh() is not necessarily involved.
-            if not self._manual_refresh_in_progress:
-                self.async_update_listeners()
-            return self.data if isinstance(self.data, dict) else {}
+        failed_address = (
+            service_info.address if service_info is not None else self.address
+        )
+        self.logger.info("Failed to retrieve data from %s", failed_address)
+        # Availability changes from direct Bluetooth polls also need to reach
+        # entities; async_request_refresh() is not necessarily involved.
+        if not self._manual_refresh_in_progress:
+            self.async_update_listeners()
+        return self.data if isinstance(self.data, dict) else {}
 
     @callback
     def _async_handle_unavailable(
