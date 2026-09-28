@@ -110,6 +110,7 @@ KEY_SHUNT_STATUS_SOURCE = "status_source"
 KEY_SHUNT_ENERGY_SOURCE = "energy_source"
 KEY_SHUNT_DECODE_CONFIDENCE = "decode_confidence"
 KEY_SHUNT_READING_VERIFIED = "reading_verified"
+SHUNT_SOC_MAX_DELTA = 5.0
 ENERGY_RESET_EPSILON = 0.001
 ENERGY_COUNTER_KEYS = {
     KEY_SHUNT_ENERGY_CHARGED_TOTAL,
@@ -1086,6 +1087,7 @@ class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEn
         self._category = category
         self._device_type = device_type
         self._attr_native_value = None
+        self._last_shunt_soc: float | None = None
         self._energy_offset = 0.0
         self._energy_last_raw: float | None = None
         self._energy_last_adjusted: float | None = None
@@ -1239,6 +1241,12 @@ class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEn
                 if self.entity_description.value_fn
                 else data.get(self.entity_description.key)
             )
+            if (
+                value is not None
+                and self._device_type == DeviceType.SHUNT300.value
+                and self.entity_description.key == KEY_SHUNT_SOC
+            ):
+                value = self._apply_shunt_soc_guard(value)
             if value is not None and self.entity_description.key in ENERGY_COUNTER_KEYS:
                 value = self._apply_energy_reset_handling(value)
             # Basic type validation based on device_class
@@ -1272,6 +1280,24 @@ class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEn
         except Exception as e:
             LOGGER.warning("Error getting native value for %s: %s", self.name, e)
         return None
+
+    def _apply_shunt_soc_guard(self, value: Any) -> float | None:
+        """Ignore implausible Shunt300 state-of-charge jumps."""
+        current = _coerce_float(value, default=None)
+        if current is None:
+            return self._last_shunt_soc
+
+        previous = self._last_shunt_soc
+        if previous is not None and abs(current - previous) > SHUNT_SOC_MAX_DELTA:
+            LOGGER.debug(
+                "Ignoring Shunt300 state-of-charge jump from %.1f%% to %.1f%%",
+                previous,
+                current,
+            )
+            return previous
+
+        self._last_shunt_soc = current
+        return current
 
     @property
     def extra_restore_state_data(self) -> ExtraStoredData | None:
