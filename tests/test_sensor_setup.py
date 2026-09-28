@@ -391,6 +391,54 @@ def test_shunt_energy_sensors_use_total_increasing_state_class() -> None:
         )
 
 
+def test_shunt_soc_ignores_changes_over_five_percentage_points() -> None:
+    """Ensure Shunt300 SOC rejects jumps larger than five percentage points."""
+    sensor_module = _load_sensor_module()
+
+    coordinator = MagicMock()
+    coordinator.address = "AA:BB:CC:DD:EE:FF"
+    coordinator.device = None
+    coordinator.last_update_success = True
+    coordinator.data = {}
+
+    device = MagicMock()
+    device.address = "AA:BB:CC:DD:EE:FF"
+    device.name = "RTMShunt300A1B2"
+    device.rssi = None
+    device.parsed_data = {sensor_module.KEY_SHUNT_SOC: 90.0}
+
+    description = next(
+        item
+        for item in sensor_module.SHUNT300_SENSORS
+        if item.key == sensor_module.KEY_SHUNT_SOC
+    )
+    entity = sensor_module.RenogyBLESensor(
+        coordinator,
+        device,
+        description,
+        "Shunt",
+        sensor_module.DeviceType.SHUNT300.value,
+    )
+
+    assert entity.native_value == 90.0
+
+    entity._attr_native_value = None
+    device.parsed_data[sensor_module.KEY_SHUNT_SOC] = 95.0
+    assert entity.native_value == 95.0
+
+    entity._attr_native_value = None
+    device.parsed_data[sensor_module.KEY_SHUNT_SOC] = 100.1
+    assert entity.native_value == 95.0
+
+    entity._attr_native_value = None
+    device.parsed_data[sensor_module.KEY_SHUNT_SOC] = 96.0
+    assert entity.native_value == 96.0
+
+    entity._attr_native_value = None
+    device.parsed_data[sensor_module.KEY_SHUNT_SOC] = 90.9
+    assert entity.native_value == 96.0
+
+
 def test_measurement_sensors_declare_display_precision() -> None:
     """Ensure every sensor with a unit suggests a display precision.
 
