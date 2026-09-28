@@ -27,6 +27,7 @@ class _BatteryState:
 class _Coordinator:
     def __init__(self) -> None:
         self.address = "F0:F8:F2:57:47:0D"
+        self.hass = object()
         self.communication_hub_enabled = True
         self.last_update_success = True
         self.device = SimpleNamespace(is_available=True)
@@ -50,6 +51,7 @@ class _Coordinator:
 
 class _ConfigEntry:
     def __init__(self) -> None:
+        self.entry_id = "entry-1"
         self.unload_callbacks: list[Any] = []
 
     def async_on_unload(self, callback: Any) -> None:
@@ -72,6 +74,7 @@ def _install_module_stubs() -> None:
     class PassiveBluetoothCoordinatorEntity:
         def __init__(self, coordinator: Any) -> None:
             self.coordinator = coordinator
+            self.hass = coordinator.hass
 
     passive_module.PassiveBluetoothCoordinatorEntity = PassiveBluetoothCoordinatorEntity
     sys.modules["homeassistant.components"] = components_module
@@ -153,7 +156,19 @@ def _install_module_stubs() -> None:
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
 
+    def async_get_device_id_by_identifier(
+        hass: Any,
+        identifier: tuple[str, str],
+        *,
+        config_entry_id: str,
+    ) -> str:
+        del hass, identifier, config_entry_id
+        return "parent-device-id"
+
     device_registry_module.DeviceInfo = DeviceInfo
+    device_registry_module.async_get_device_id_by_identifier = (
+        async_get_device_id_by_identifier
+    )
     sys.modules["homeassistant.helpers.device_registry"] = device_registry_module
 
     entity_platform_module = cast(
@@ -280,7 +295,9 @@ def test_hub_battery_0x33_is_child_device_with_validated_values() -> None:
     )
 
     entities = [
-        module.RenogyHubBatterySensor(coordinator, 0x33, description)
+        module.RenogyHubBatterySensor(
+            coordinator, _ConfigEntry(), 0x33, description
+        )
         for description in module.HUB_BATTERY_SENSORS
     ]
     entities_by_key = {entity.entity_description.key: entity for entity in entities}
@@ -295,14 +312,11 @@ def test_hub_battery_0x33_is_child_device_with_validated_values() -> None:
     voltage = entities_by_key["battery_voltage"]
     assert voltage.available is True
     assert voltage._attr_unique_id == "F0:F8:F2:57:47:0D:hub:33_battery_voltage"
-    assert voltage._attr_device_info["identifiers"] == {
+    assert voltage.device_info["identifiers"] == {
         ("renogy_ble", "F0:F8:F2:57:47:0D:hub:33")
     }
-    assert voltage._attr_device_info["via_device"] == (
-        "renogy_ble",
-        "F0:F8:F2:57:47:0D",
-    )
-    assert voltage._attr_device_info["name"] == "Renogy Hub Battery 0x33"
+    assert voltage.device_info["via_device_id"] == "parent-device-id"
+    assert voltage.device_info["name"] == "Renogy Hub Battery 0x33"
     assert voltage.extra_state_attributes == {"slave_id": "0x33"}
 
 
@@ -318,6 +332,7 @@ def test_hub_battery_sensor_tracks_logical_battery_availability() -> None:
     )
     entity = module.RenogyHubBatterySensor(
         coordinator,
+        _ConfigEntry(),
         0x33,
         module.HUB_BATTERY_SENSORS[0],
     )
