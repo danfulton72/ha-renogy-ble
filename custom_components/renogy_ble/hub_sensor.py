@@ -21,7 +21,10 @@ from homeassistant.const import (
     UnitOfPower,
 )
 from homeassistant.core import callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    DeviceInfo,
+    async_get_device_id_by_identifier,
+)
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTR_MANUFACTURER, DOMAIN
@@ -99,6 +102,7 @@ def setup_hub_battery_sensors(
             new_entities.extend(
                 RenogyHubBatterySensor(
                     coordinator=coordinator,
+                    config_entry=config_entry,
                     slave_id=battery.slave_id,
                     description=description,
                 )
@@ -122,23 +126,34 @@ class RenogyHubBatterySensor(PassiveBluetoothCoordinatorEntity, SensorEntity):
     def __init__(
         self,
         coordinator: Any,
+        config_entry: ConfigEntry,
         slave_id: int,
         description: SensorEntityDescription,
     ) -> None:
         """Initialize one validated Hub battery sensor."""
         super().__init__(coordinator)
         self.entity_description = description
+        self._config_entry = config_entry
         self._slave_id = slave_id
-        logical_id = hub_battery_identifier(coordinator.address, slave_id)
+        self._logical_id = hub_battery_identifier(coordinator.address, slave_id)
 
         self._attr_has_entity_name = True
         self._attr_name = cast(str | None, description.name)
-        self._attr_unique_id = f"{logical_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, logical_id)},
-            name=f"Renogy Hub Battery 0x{slave_id:02X}",
+        self._attr_unique_id = f"{self._logical_id}_{description.key}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info linked to the registered Communication Hub."""
+        via_device_id = async_get_device_id_by_identifier(
+            self.hass,
+            (DOMAIN, self.coordinator.address),
+            config_entry_id=self._config_entry.entry_id,
+        )
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._logical_id)},
+            name=f"Renogy Hub Battery 0x{self._slave_id:02X}",
             manufacturer=ATTR_MANUFACTURER,
-            via_device=(DOMAIN, coordinator.address),
+            via_device_id=via_device_id,
         )
 
     @property
