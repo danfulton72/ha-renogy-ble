@@ -266,6 +266,37 @@ def test_reload_listener_reloads_entry() -> None:
     hass.config_entries.async_reload.assert_awaited_once_with("entry-1")
 
 
+def test_update_device_registry_uses_config_entry_identifier_lookup() -> None:
+    """Device registry lookup is scoped to the owning config entry."""
+    init_module, _ = _load_init_module()
+    registry = MagicMock()
+    registry_entry = MagicMock()
+    registry_entry.id = "device-id"
+    registry.async_get_device_by_identifier.return_value = registry_entry
+    init_module.async_get_device_registry = MagicMock(return_value=registry)
+
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    device = MagicMock()
+    device.address = "AA:BB:CC:DD:EE:FF"
+    device.name = "Renogy Shunt"
+    device.device_type = init_module.DeviceType.SHUNT300.value
+    device.parsed_data = {"model": "Shunt300"}
+
+    asyncio.run(init_module.update_device_registry(hass, entry, device))
+
+    registry.async_get_device_by_identifier.assert_called_once_with(
+        (init_module.DOMAIN, device.address),
+        entry.entry_id,
+    )
+    registry.async_update_device.assert_called_once_with(
+        registry_entry.id,
+        name=device.name,
+        model="Shunt300",
+    )
+
+
 def test_async_unload_entry_awaits_shutdown() -> None:
     """Ensure unload awaits coordinator shutdown before dropping entry data."""
     init_module, _ = _load_init_module()

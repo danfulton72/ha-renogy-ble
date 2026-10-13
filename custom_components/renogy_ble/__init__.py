@@ -283,7 +283,9 @@ async def update_device_registry(
             else device.device_type.capitalize()
         )
 
-        device_entry = device_registry.async_get_device({(DOMAIN, device.address)})
+        device_entry = device_registry.async_get_device_by_identifier(
+            (DOMAIN, device.address), entry.entry_id
+        )
 
         if device_entry:
             LOGGER.debug(
