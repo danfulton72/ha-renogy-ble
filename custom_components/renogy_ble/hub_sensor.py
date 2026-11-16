@@ -142,7 +142,8 @@ class RenogyHubBatterySensor(PassiveBluetoothCoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{self._logical_id}_{description.key}"
 
     @property
-    def device_info(self) -> DeviceInfo:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def device_info(self) -> DeviceInfo:  # ty: ignore[invalid-property-type-override]
         """Return device info linked to the registered Communication Hub."""
         via_device_id = async_get_device_id_by_identifier(
             self.hass,
@@ -179,7 +180,8 @@ class RenogyHubBatterySensor(PassiveBluetoothCoordinatorEntity, SensorEntity):
         )
 
     @property
-    def native_value(self) -> float | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def native_value(self) -> float | None:  # ty: ignore[invalid-property-type-override]
         """Return this sensor's validated value from the Hub cache."""
         battery = self._battery
         if battery is None:
@@ -191,6 +193,7 @@ class RenogyHubBatterySensor(PassiveBluetoothCoordinatorEntity, SensorEntity):
         return float(value) if value is not None else None
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def extra_state_attributes(self) -> dict[str, str]:  # ty: ignore[invalid-property-type-override]
         """Expose the validated Modbus slave ID for diagnostics."""
         return {"slave_id": f"0x{self._slave_id:02X}"}

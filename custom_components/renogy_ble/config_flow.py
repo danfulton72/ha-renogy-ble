@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    # Home Assistant 2026.11 types flow schemas as Probatio and aliases
+    # voluptuous to it at runtime; older releases only ship voluptuous.
+    import voluptuous as vol
+
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
