@@ -295,9 +295,7 @@ def test_hub_battery_0x33_is_child_device_with_validated_values() -> None:
     )
 
     entities = [
-        module.RenogyHubBatterySensor(
-            coordinator, _ConfigEntry(), 0x33, description
-        )
+        module.RenogyHubBatterySensor(coordinator, _ConfigEntry(), 0x33, description)
         for description in module.HUB_BATTERY_SENSORS
     ]
     entities_by_key = {entity.entity_description.key: entity for entity in entities}

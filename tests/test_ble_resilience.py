@@ -466,4 +466,3 @@ def test_unavailable_device_accepts_recent_service_info() -> None:
         patch.object(ble_module.time, "monotonic", return_value=1_000.0),
     ):
         assert coordinator._service_info_for_operation() is service_info
-
