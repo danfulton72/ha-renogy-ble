@@ -3,7 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.test_ble import _GraceDevice, _load_ble_module
+from tests.test_ble import _decoder_returning, _GraceDevice, _load_ble_module
 
 
 class _PollableDevice(_GraceDevice):
@@ -320,16 +320,9 @@ def test_shunt_payload_stamps_watchdog_clock() -> None:
     coordinator = _coordinator(ble_module, device_type="shunt300")
     coordinator.device = _GraceDevice()
 
-    payload = bytes(range(ble_module.shunt_expected_payload_length or 20))
-    with (
-        patch.object(
-            ble_module,
-            "shunt_find_valid_payload_window",
-            return_value=(payload, {"shunt_voltage": 12.8}),
-        ),
-        patch.object(ble_module.time, "monotonic", return_value=4_242.0),
-    ):
-        coordinator._shunt_energy_client = None
+    payload = bytes(range(20))
+    coordinator._shunt_decoder = _decoder_returning((payload, {"shunt_voltage": 12.8}))
+    with patch.object(ble_module.time, "monotonic", return_value=4_242.0):
         coordinator._process_sustained_shunt_notification(payload)
 
     assert coordinator._last_shunt_payload_monotonic == 4_242.0

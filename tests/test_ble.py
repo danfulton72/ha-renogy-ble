@@ -190,12 +190,6 @@ def _install_module_stubs() -> None:
     class ShuntBleClient:
         """Stub shunt client matching the library interface."""
 
-        def _integrate_energy_totals(
-            self, *, device_address: str, power_w: float | None, now_ts: float
-        ) -> tuple[float, float]:
-            """Return deterministic energy totals for testing."""
-            return (0.0, 0.0)
-
         async def read_device(self, device):
             return RenogyBleReadResult(True, getattr(device, "parsed_data", {}), None)
 
@@ -204,7 +198,17 @@ def _install_module_stubs() -> None:
     renogy_ble_shunt_module.SHUNT_NOTIFY_CHAR_UUID = (
         "0000c411-0000-1000-8000-00805f9b34fb"
     )
-    renogy_ble_shunt_module._find_valid_payload_window = MagicMock(return_value=None)
+
+    class ShuntNotificationDecoder:
+        """Stub decoder that completes no readings unless a test overrides it."""
+
+        def feed(self, _data: bytes) -> list[dict[str, Any]]:
+            return []
+
+        def reset_buffer(self) -> None:
+            """Discard buffered bytes."""
+
+    renogy_ble_shunt_module.ShuntNotificationDecoder = ShuntNotificationDecoder
 
     sys.modules["renogy_ble"] = renogy_ble_module
     sys.modules["renogy_ble.ble"] = renogy_ble_ble_module
@@ -220,6 +224,22 @@ def _load_ble_module():
     import importlib
 
     return importlib.import_module("custom_components.renogy_ble.ble")
+
+
+def _decoder_returning(*payloads: tuple[bytes, dict[str, Any]]) -> MagicMock:
+    """Return a decoder stub completing one reading per fed notification."""
+    queue = list(payloads)
+
+    def _feed(_data: bytes) -> list[dict[str, Any]]:
+        raw, parsed = queue.pop(0) if len(queue) > 1 else queue[0]
+        reading = dict(parsed)
+        reading["raw_payload"] = raw.hex()
+        reading["raw_words"] = [
+            int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw) - 1, 2)
+        ]
+        return [reading]
+
+    return MagicMock(feed=MagicMock(side_effect=_feed), reset_buffer=MagicMock())
 
 
 class _GraceDevice:
@@ -913,7 +933,7 @@ def test_sustained_shunt_notification_ignores_duplicate_payloads():
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
         coordinator._process_sustained_shunt_notification(b"first")
@@ -940,8 +960,8 @@ def test_sustained_shunt_notification_rejects_large_soc_jump():
     listener = MagicMock()
     coordinator.async_add_listener(listener)
 
-    payloads = iter(
-        [
+    coordinator._shunt_decoder = _decoder_returning(
+        *[
             (
                 b"\x01\x02",
                 {
@@ -961,9 +981,6 @@ def test_sustained_shunt_notification_rejects_large_soc_jump():
                 },
             ),
         ]
-    )
-    ble_module.shunt_find_valid_payload_window = MagicMock(
-        side_effect=lambda *_args: next(payloads)
     )
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
@@ -1019,7 +1036,7 @@ def test_sustained_shunt_notification_populates_raw_words():
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", return_value=100.0):
         assert coordinator._process_sustained_shunt_notification(b"payload") is True
@@ -1061,7 +1078,7 @@ def test_sustained_shunt_notification_recovers_from_duplicate_payload_after_erro
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
         coordinator._process_sustained_shunt_notification(b"first")
