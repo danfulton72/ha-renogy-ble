@@ -55,6 +55,15 @@ jobs:
               const [major, minor, patch] = versions.at(-1);
               const newVersion = `${major}.${minor}.${patch + 1}`;
               manifest.version = newVersion;
+              // Home Assistant installs from the manifest, but Dependabot only
+              // updates pyproject.toml. Copy the merged pins for packages the
+              // manifest already lists, mirroring scripts/sync_manifest_requirements.py.
+              const { data: pyprojectFile } = await github.rest.repos.getContent({ owner, repo, path: "pyproject.toml", ref: defaultBranch });
+              const pyproject = Buffer.from(pyprojectFile.content, "base64").toString("utf8");
+              const normalizeName = (requirement) => (/^\s*([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(requirement)?.[1] ?? "").replace(/[-_.]+/g, "-").toLowerCase();
+              const dependencyBlock = /^dependencies\s*=\s*\[([\s\S]*?)^\]/m.exec(pyproject)?.[1] ?? "";
+              const projectPins = new Map([...dependencyBlock.matchAll(/"([^"]+)"/g)].map((match) => [normalizeName(match[1]), match[1]]));
+              manifest.requirements = (manifest.requirements || []).map((requirement) => projectPins.get(normalizeName(requirement)) ?? requirement);
               const { data: updated } = await github.rest.repos.createOrUpdateFileContents({ owner, repo, path: manifestPath, branch: defaultBranch, sha: manifestFile.sha, message: `chore: release v${newVersion} [skip ci]`, content: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`).toString("base64"), committer: { name: "github-actions[bot]", email: "41898282+github-actions[bot]@users.noreply.github.com" } });
               const releaseSha = updated.commit.sha;
               const tagName = `v${newVersion}`;

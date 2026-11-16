@@ -69,6 +69,12 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Synchronize manifest requirements
+        if: steps.version.outputs.already_released != 'true'
+        # Home Assistant installs from the manifest, but Dependabot only
+        # updates pyproject.toml, so copy the tested library pin across.
+        run: python scripts/sync_manifest_requirements.py
+
       - name: Synchronize manifest version
         if: steps.version.outputs.already_released != 'true'
         env:
