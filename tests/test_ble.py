@@ -138,12 +138,14 @@ def _install_module_stubs() -> None:
             advertisement_rssi,
             device_type=None,
             manufacturer_data=None,
+            advertisement_name=None,
             max_failures=3,
             unavailable_retry_interval=10,
         ):
             self.ble_device = ble_device
             self.address = ble_device.address
             self.name = ble_device.name or "Unknown Renogy Device"
+            self.advertised_name = advertisement_name or ble_device.name
             self.rssi = advertisement_rssi
             self.device_type = device_type
             self.manufacturer_data = manufacturer_data or {}
@@ -188,12 +190,6 @@ def _install_module_stubs() -> None:
     class ShuntBleClient:
         """Stub shunt client matching the library interface."""
 
-        def _integrate_energy_totals(
-            self, *, device_address: str, power_w: float | None, now_ts: float
-        ) -> tuple[float, float]:
-            """Return deterministic energy totals for testing."""
-            return (0.0, 0.0)
-
         async def read_device(self, device):
             return RenogyBleReadResult(True, getattr(device, "parsed_data", {}), None)
 
@@ -202,7 +198,17 @@ def _install_module_stubs() -> None:
     renogy_ble_shunt_module.SHUNT_NOTIFY_CHAR_UUID = (
         "0000c411-0000-1000-8000-00805f9b34fb"
     )
-    renogy_ble_shunt_module._find_valid_payload_window = MagicMock(return_value=None)
+
+    class ShuntNotificationDecoder:
+        """Stub decoder that completes no readings unless a test overrides it."""
+
+        def feed(self, _data: bytes) -> list[dict[str, Any]]:
+            return []
+
+        def reset_buffer(self) -> None:
+            """Discard buffered bytes."""
+
+    renogy_ble_shunt_module.ShuntNotificationDecoder = ShuntNotificationDecoder
 
     sys.modules["renogy_ble"] = renogy_ble_module
     sys.modules["renogy_ble.ble"] = renogy_ble_ble_module
@@ -218,6 +224,22 @@ def _load_ble_module():
     import importlib
 
     return importlib.import_module("custom_components.renogy_ble.ble")
+
+
+def _decoder_returning(*payloads: tuple[bytes, dict[str, Any]]) -> MagicMock:
+    """Return a decoder stub completing one reading per fed notification."""
+    queue = list(payloads)
+
+    def _feed(_data: bytes) -> list[dict[str, Any]]:
+        raw, parsed = queue.pop(0) if len(queue) > 1 else queue[0]
+        reading = dict(parsed)
+        reading["raw_payload"] = raw.hex()
+        reading["raw_words"] = [
+            int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw) - 1, 2)
+        ]
+        return [reading]
+
+    return MagicMock(feed=MagicMock(side_effect=_feed), reset_buffer=MagicMock())
 
 
 class _GraceDevice:
@@ -911,7 +933,7 @@ def test_sustained_shunt_notification_ignores_duplicate_payloads():
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
         coordinator._process_sustained_shunt_notification(b"first")
@@ -938,8 +960,8 @@ def test_sustained_shunt_notification_rejects_large_soc_jump():
     listener = MagicMock()
     coordinator.async_add_listener(listener)
 
-    payloads = iter(
-        [
+    coordinator._shunt_decoder = _decoder_returning(
+        *[
             (
                 b"\x01\x02",
                 {
@@ -959,9 +981,6 @@ def test_sustained_shunt_notification_rejects_large_soc_jump():
                 },
             ),
         ]
-    )
-    ble_module.shunt_find_valid_payload_window = MagicMock(
-        side_effect=lambda *_args: next(payloads)
     )
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
@@ -1017,7 +1036,7 @@ def test_sustained_shunt_notification_populates_raw_words():
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", return_value=100.0):
         assert coordinator._process_sustained_shunt_notification(b"payload") is True
@@ -1059,7 +1078,7 @@ def test_sustained_shunt_notification_recovers_from_duplicate_payload_after_erro
             "shunt_soc": 85.0,
         },
     )
-    ble_module.shunt_find_valid_payload_window = MagicMock(return_value=payload)
+    coordinator._shunt_decoder = _decoder_returning(payload)
 
     with patch.object(ble_module.time, "monotonic", side_effect=[100.0, 110.0]):
         coordinator._process_sustained_shunt_notification(b"first")
@@ -1577,3 +1596,162 @@ def test_riv_control_state_readback_decodes_confirmed_blocks() -> None:
     assert coordinator.data["inverter_output_priority"] == 1
     assert device.parsed_data["inverter_output"] == 2
     fake_client._close_session.assert_awaited_once()
+
+
+ADDRESS = "14:9C:EF:03:68:81"
+
+
+def _battery_coordinator(ble_module, device_name: str | None = None):
+    """Return a battery coordinator for name-resolution tests."""
+    return ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address=ADDRESS,
+        scan_interval=30,
+        device_type="battery",
+        device_name=device_name,
+    )
+
+
+def _service_info(ble_module, name, *, local_name=None, os_name=None):
+    """Build service info with explicit advertisement and BlueZ names."""
+    service_info = ble_module.BluetoothServiceInfoBleak(
+        address=ADDRESS, name=name, rssi=-60
+    )
+    service_info.advertisement.local_name = local_name
+    service_info.advertisement.manufacturer_data = {}
+    service_info.device.name = os_name
+    return service_info
+
+
+def test_passive_scan_address_does_not_overwrite_real_name() -> None:
+    """An address-only advertisement keeps the last real local name."""
+    ble_module = _load_ble_module()
+    coordinator = _battery_coordinator(ble_module)
+
+    coordinator._update_device_from_service_info(
+        _service_info(ble_module, "RNGPRO123456", local_name="RNGPRO123456")
+    )
+    device = coordinator._update_device_from_service_info(
+        _service_info(ble_module, ADDRESS)
+    )
+
+    assert device.name == "RNGPRO123456"
+    assert device.advertised_name == "RNGPRO123456"
+
+
+def test_passive_scan_falls_back_to_bluez_name() -> None:
+    """BlueZ's cached name is used when no advertisement carries a name."""
+    ble_module = _load_ble_module()
+    coordinator = _battery_coordinator(ble_module, device_name="RNGPRO000000")
+
+    device = coordinator._update_device_from_service_info(
+        _service_info(ble_module, ADDRESS, os_name="RNGPRO123456")
+    )
+
+    assert device.name == "RNGPRO123456"
+    assert device.advertised_name == "RNGPRO123456"
+
+
+def test_passive_scan_falls_back_to_configured_name() -> None:
+    """The config entry name is used when no other source has a real name."""
+    ble_module = _load_ble_module()
+    coordinator = _battery_coordinator(ble_module, device_name="RNGPRO123456")
+
+    device = coordinator._update_device_from_service_info(
+        _service_info(ble_module, ADDRESS, os_name=ADDRESS)
+    )
+
+    assert device.name == "RNGPRO123456"
+    assert device.advertised_name == "RNGPRO123456"
+
+
+def test_configured_address_name_is_ignored() -> None:
+    """A config entry saved with an address placeholder is not a fallback."""
+    ble_module = _load_ble_module()
+    coordinator = _battery_coordinator(ble_module, device_name=ADDRESS)
+
+    assert coordinator.configured_name is None
+
+
+def test_hardware_name_is_not_replaced_by_advertisement() -> None:
+    """A name the device reported from its registers stays authoritative."""
+    ble_module = _load_ble_module()
+    coordinator = _battery_coordinator(ble_module)
+    device = coordinator._update_device_from_service_info(
+        _service_info(ble_module, "RNGPRO123456", local_name="RNGPRO123456")
+    )
+    device.parsed_data = {"device_name": "House Battery"}
+    device.name = "House Battery"
+
+    coordinator._update_device_from_service_info(
+        _service_info(ble_module, "RNGPRO123456", local_name="RNGPRO123456")
+    )
+
+    assert device.name == "House Battery"
+    assert device.advertised_name == "RNGPRO123456"
+
+
+def test_static_device_info_carries_across_partial_poll() -> None:
+    """Model and device ID survive a poll that skipped the info registers."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="controller",
+    )
+    coordinator.data = {"model": "RNG-CTRL-RVR40", "device_id": 1, "pv_power": 10}
+
+    merged = coordinator._merge_static_device_info({"pv_power": 20})
+
+    assert merged == {"model": "RNG-CTRL-RVR40", "device_id": 1, "pv_power": 20}
+
+
+def test_static_device_info_does_not_carry_measurements() -> None:
+    """A measurement missing from a poll stays missing."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="controller",
+    )
+    coordinator.data = {"model": "OLD", "battery_voltage": 12.8}
+
+    merged = coordinator._merge_static_device_info({"model": "NEW"})
+
+    assert merged == {"model": "NEW"}
+
+
+def test_partial_poll_keeps_model_on_device_and_coordinator() -> None:
+    """A successful poll without info registers keeps the model everywhere."""
+    ble_module = _load_ble_module()
+    coordinator = ble_module.RenogyActiveBluetoothCoordinator(
+        hass=MagicMock(),
+        logger=MagicMock(),
+        address="AA:BB:CC:DD:EE:FF",
+        scan_interval=30,
+        device_type="controller",
+    )
+    service_info = ble_module.BluetoothServiceInfoBleak(
+        address="AA:BB:CC:DD:EE:FF", name="BT-TH-123456", rssi=-60
+    )
+    coordinator._update_device_from_service_info(service_info)
+    coordinator.data = {"model": "RNG-CTRL-RVR40", "device_id": 1}
+
+    async def _read(device):
+        device.parsed_data = {"pv_power": 25}
+        return sys.modules["renogy_ble.ble"].RenogyBleReadResult(
+            True, device.parsed_data, None
+        )
+
+    coordinator._ble_client.read_device = AsyncMock(side_effect=_read)
+
+    asyncio.run(coordinator._read_device_data(service_info))
+
+    assert coordinator.data["model"] == "RNG-CTRL-RVR40"
+    assert coordinator.device.parsed_data["model"] == "RNG-CTRL-RVR40"
+    assert coordinator.data["pv_power"] == 25

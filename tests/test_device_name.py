@@ -178,3 +178,29 @@ def test_btric_inverter_name_ready():
     assert device_name_module.is_device_name_ready(
         "BTRIC130000029", const_module.DeviceType.INVERTER.value
     )
+
+
+def test_address_placeholder_is_not_a_real_name() -> None:
+    """A name equal to the device address is a passive-scanning placeholder."""
+    module = _load_device_name_module()
+    address = "14:9C:EF:03:68:81"
+
+    assert not module.has_real_device_name(address, address)
+    assert not module.has_real_device_name(address.lower(), address)
+    assert not module.has_real_device_name("14-9C-EF-03-68-81", address)
+    assert module.has_real_device_name("RNGPRO123456", address)
+    # Without an address to compare against, the check cannot run.
+    assert module.has_real_device_name(address)
+
+
+def test_address_placeholder_does_not_detect_device_type() -> None:
+    """An address placeholder must not be treated as a supported name."""
+    module = _load_device_name_module()
+    address = "14:9C:EF:03:68:81"
+
+    assert (
+        module.detect_device_type_from_ble_name(address, "battery", address=address)
+        == "battery"
+    )
+    assert not module.is_supported_renogy_ble_name(address, address=address)
+    assert not module.is_device_name_ready(address, "battery", address)

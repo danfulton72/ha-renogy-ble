@@ -41,11 +41,39 @@ SUPPORTED_BLE_NAME_PREFIXES: tuple[str, ...] = (
 )
 
 
-def has_real_device_name(device_name: str | None) -> bool:
-    """Return True when the provided name is usable and not a placeholder."""
+def has_real_device_name(device_name: str | None, address: str | None = None) -> bool:
+    """Return True when the provided name is usable and not a placeholder.
+
+    Pass ``address`` whenever the caller has it. Without it the address
+    placeholder check cannot run, because deciding whether a name is really an
+    address requires the address to compare against.
+    """
     if not isinstance(device_name, str):
         return False
-    return bool(device_name) and not device_name.startswith(UNKNOWN_DEVICE_NAME_PREFIX)
+    if not device_name or device_name.startswith(UNKNOWN_DEVICE_NAME_PREFIX):
+        return False
+    return not is_address_placeholder(device_name, address)
+
+
+def is_address_placeholder(device_name: str | None, address: str | None) -> bool:
+    """Return True when the "name" is really the device's own address.
+
+    Renogy devices send their local name only in the scan response. Under
+    passive scanning, which Home Assistant's default ``auto`` mode selects on
+    adapters that support it, no advertisement carries a name, and
+    ``habluetooth`` falls back to the address. Treating that address as a name
+    overwrites a good cached name and breaks battery protocol detection, which
+    keys on the name prefix.
+
+    Compare against the address rather than matching a MAC pattern, because
+    ``BLEDevice.address`` is a UUID on macOS. BlueZ also generates an alias of
+    the address with ``:`` replaced by ``-``, so that form is checked too.
+    """
+    if not isinstance(device_name, str) or not address:
+        return False
+    name = device_name.strip().casefold()
+    resolved = address.strip().casefold()
+    return name in (resolved, resolved.replace(":", "-"))
 
 
 def expected_prefixes_for_device_type(device_type: str) -> tuple[str, ...]:
@@ -53,9 +81,13 @@ def expected_prefixes_for_device_type(device_type: str) -> tuple[str, ...]:
     return DEVICE_NAME_PREFIXES_BY_TYPE.get(device_type, (RENOGY_BT_PREFIX,))
 
 
-def is_device_name_ready(device_name: str | None, device_type: str) -> bool:
+def is_device_name_ready(
+    device_name: str | None, device_type: str, address: str | None = None
+) -> bool:
     """Return True when a name is present and matches the expected prefix."""
-    if not isinstance(device_name, str) or not has_real_device_name(device_name):
+    if not isinstance(device_name, str) or not has_real_device_name(
+        device_name, address
+    ):
         return False
     if device_type == DeviceType.BATTERY.value and _is_legacy_battery_name(device_name):
         return True
@@ -65,23 +97,26 @@ def is_device_name_ready(device_name: str | None, device_type: str) -> bool:
 def is_supported_renogy_ble_name(
     device_name: str | None,
     manufacturer_data: dict[int, bytes] | None = None,
+    address: str | None = None,
 ) -> bool:
     """Return True for BLE advertisements from supported Renogy devices."""
     return detect_device_type_from_ble_name(
         device_name,
         manufacturer_data=manufacturer_data,
-    ) != DEFAULT_DEVICE_TYPE or _is_supported_default_type_name(device_name)
+        address=address,
+    ) != DEFAULT_DEVICE_TYPE or _is_supported_default_type_name(device_name, address)
 
 
 def detect_device_type_from_ble_name(
     device_name: str | None,
     default_device_type: str = DEFAULT_DEVICE_TYPE,
     manufacturer_data: dict[int, bytes] | None = None,
+    address: str | None = None,
 ) -> str:
     """Infer the device type from a BLE name, with a provided default fallback."""
     manufacturer_data = manufacturer_data or {}
 
-    if isinstance(device_name, str) and has_real_device_name(device_name):
+    if isinstance(device_name, str) and has_real_device_name(device_name, address):
         if device_name.startswith(
             (RENOGY_INVERTER_PREFIX, RENOGY_REGO_INVERTER_PREFIX)
         ):
@@ -131,9 +166,13 @@ def _is_legacy_battery_name(device_name: str) -> bool:
     return any(marker in suffix for marker in BATTERY_LEGACY_NAME_MARKERS)
 
 
-def _is_supported_default_type_name(device_name: str | None) -> bool:
+def _is_supported_default_type_name(
+    device_name: str | None, address: str | None = None
+) -> bool:
     """Return True for supported names that intentionally map to controller/DCC."""
-    if not isinstance(device_name, str) or not has_real_device_name(device_name):
+    if not isinstance(device_name, str) or not has_real_device_name(
+        device_name, address
+    ):
         return False
 
     return any(device_name.startswith(prefix) for prefix in SUPPORTED_BLE_NAME_PREFIXES)

@@ -47,6 +47,7 @@ from .const import (
     DEFAULT_SHUNT_CONNECTION_MODE,
     DEFAULT_UNAVAILABLE_RETRY_INTERVAL,
     RIV_INVERTER_MODEL_PREFIX,
+    STATIC_DEVICE_INFO_KEYS,
     DeviceType,
     InverterRegister,
     NonShuntConnectionMode,
@@ -80,12 +81,9 @@ except ImportError:
 
 if renogy_ble_shunt is not None:
     shunt_client_class = getattr(renogy_ble_shunt, "ShuntBleClient", None)
-    shunt_find_valid_payload_window = getattr(
-        renogy_ble_shunt, "_find_valid_payload_window", None
-    )
-    shunt_expected_payload_length = getattr(
-        renogy_ble_shunt, "SHUNT_EXPECTED_PAYLOAD_LENGTH", None
-    )
+    # The decoder buffers notification fragments, so a 110-byte reading that
+    # arrives as two 55-byte notifications is reassembled instead of dropped.
+    shunt_decoder_class = getattr(renogy_ble_shunt, "ShuntNotificationDecoder", None)
     shunt_notify_char_uuid = getattr(
         renogy_ble_shunt,
         "SHUNT_NOTIFY_CHAR_UUID",
@@ -93,8 +91,7 @@ if renogy_ble_shunt is not None:
     )
 else:
     shunt_client_class = None
-    shunt_find_valid_payload_window = None
-    shunt_expected_payload_length = None
+    shunt_decoder_class = None
     shunt_notify_char_uuid = "0000c411-0000-1000-8000-00805f9b34fb"
 
 LOAD_CONTROL_REGISTER = getattr(renogy_ble_module, "LOAD_CONTROL_REGISTER", 0x010A)
@@ -195,6 +192,7 @@ class RenogyActiveBluetoothCoordinator(
         non_shunt_connection_mode: str = DEFAULT_NON_SHUNT_CONNECTION_MODE,
         max_failures: int = DEFAULT_MAX_FAILURES,
         unavailable_retry_interval: int = DEFAULT_UNAVAILABLE_RETRY_INTERVAL,
+        device_name: str | None = None,
         device_data_callback: Callable[[RenogyBLEDevice], Awaitable[None]]
         | None = None,
     ):
@@ -209,6 +207,14 @@ class RenogyActiveBluetoothCoordinator(
             connectable=True,
         )
         self.device: RenogyBLEDevice | None = None
+        self._last_advertised_name: str | None = None
+        # The name resolved when the device was added, kept across restarts by
+        # the config entry. Advertisements are an unreliable source for it: the
+        # local name rides in the scan response only, so it is absent under
+        # passive scanning and intermittent under active scanning.
+        self.configured_name = (
+            device_name if has_real_device_name(device_name, address) else None
+        )
         self.scan_interval = scan_interval
         self.shunt_connection_mode = shunt_connection_mode
         self.non_shunt_connection_mode = non_shunt_connection_mode
@@ -233,8 +239,10 @@ class RenogyActiveBluetoothCoordinator(
         self._shunt_startup_gate_complete = False
         self._last_sustained_shunt_push = 0.0
         self._last_sustained_shunt_data: dict[str, Any] = {}
-        self._shunt_energy_client = (
-            shunt_client_class() if shunt_client_class is not None else None
+        # One decoder per device keeps fragment buffering and energy totals
+        # scoped to this shunt. Energy totals survive reconnects.
+        self._shunt_decoder: Any | None = (
+            shunt_decoder_class() if shunt_decoder_class is not None else None
         )
 
         # Add required properties for Home Assistant CoordinatorEntity compatibility
@@ -688,6 +696,27 @@ class RenogyActiveBluetoothCoordinator(
         if callable(close_client):
             await close_client()
 
+    def _resolve_name(self, service_info: BluetoothServiceInfoBleak) -> str | None:
+        """Return the best available device name for this advertisement.
+
+        Sources are tried in order: the last real local name seen in an
+        advertisement, Home Assistant's service-info name, BlueZ's cached name
+        on the BLEDevice, and finally the name saved in the config entry. Each
+        candidate is rejected when it is only the device address.
+        """
+        local_name = getattr(service_info.advertisement, "local_name", None)
+        if has_real_device_name(local_name, service_info.address):
+            self._last_advertised_name = clean_device_name(local_name)
+        for candidate in (
+            self._last_advertised_name,
+            service_info.name,
+            getattr(service_info.device, "name", None),
+            self.configured_name,
+        ):
+            if has_real_device_name(candidate, service_info.address):
+                return clean_device_name(candidate)
+        return None
+
     def _update_device_from_service_info(
         self, service_info: BluetoothServiceInfoBleak
     ) -> RenogyBLEDevice:
@@ -696,16 +725,18 @@ class RenogyActiveBluetoothCoordinator(
         if not manufacturer_data and self.device is not None:
             # Some follow-up advertisements omit manufacturer data entirely.
             manufacturer_data = self.device.manufacturer_data
+        resolved_name = self._resolve_name(service_info)
         detected_type = detect_device_type_from_ble_name(
-            service_info.name,
+            resolved_name,
             self.device_type,
             manufacturer_data=manufacturer_data,
+            address=service_info.address,
         )
         if self.device_type != detected_type:
             self.logger.debug(
                 "Detected %s device from BLE name: %s",
                 detected_type,
-                service_info.name,
+                resolved_name,
             )
             self.device_type = detected_type
 
@@ -720,21 +751,33 @@ class RenogyActiveBluetoothCoordinator(
                 service_info.advertisement.rssi,
                 device_type=detected_type,
                 manufacturer_data=manufacturer_data,
+                advertisement_name=resolved_name,
                 max_failures=self.max_failures,
                 unavailable_retry_interval=self.unavailable_retry_interval,
             )
+            # The library names the device from BLEDevice.name, which can be
+            # the address under passive scanning. Prefer the resolved name.
+            if resolved_name:
+                self.device.name = resolved_name
         else:
             old_name = self.device.name
             self.device.ble_device = service_info.device
             self.device.manufacturer_data = dict(manufacturer_data)
-            if has_real_device_name(service_info.name):
-                cleaned_name = clean_device_name(service_info.name)
-                if old_name != cleaned_name:
-                    self.device.name = cleaned_name
+            # A name read from the device's own registers is authoritative, so
+            # advertisements only rename devices that have not reported one.
+            hardware_name = self.device.parsed_data.get("device_name")
+            if resolved_name:
+                # Battery protocol detection keys on the advertised name.
+                self.device.advertised_name = resolved_name
+                if (
+                    not has_real_device_name(hardware_name, self.address)
+                    and old_name != resolved_name
+                ):
+                    self.device.name = resolved_name
                     self.logger.debug(
                         "Updated device name from '%s' to '%s'",
                         old_name,
-                        cleaned_name,
+                        resolved_name,
                     )
 
             self.device.rssi = (
@@ -888,39 +931,26 @@ class RenogyActiveBluetoothCoordinator(
         parsed_data["shunt_soc"] = previous_soc
 
     def _process_sustained_shunt_notification(self, data: bytes) -> bool:
-        """Parse and publish one sustained Smart Shunt notification payload."""
-        if (
-            shunt_find_valid_payload_window is None
-            or shunt_expected_payload_length is None
-        ):
-            return False
+        """Feed one notification fragment and publish any completed readings.
 
-        maybe_payload = shunt_find_valid_payload_window(
-            data, shunt_expected_payload_length
-        )
-        if maybe_payload is None:
-            return False
+        Returns True when the fragment completed at least one valid reading.
+        """
+        if self._shunt_decoder is None:
+            raise RuntimeError(
+                "Installed renogy-ble does not provide ShuntNotificationDecoder"
+            )
 
-        raw_payload, parsed_data = maybe_payload
+        readings = self._shunt_decoder.feed(data)
+        for parsed_data in readings:
+            self._publish_sustained_shunt_reading(parsed_data)
+        return bool(readings)
+
+    def _publish_sustained_shunt_reading(self, parsed_data: dict[str, Any]) -> None:
+        """Publish one decoded sustained Smart Shunt reading."""
         now = time.monotonic()
         # Feeds the sustained-listener watchdog; a decoded payload is the only
         # proof the link is actually carrying data.
         self._last_shunt_payload_monotonic = now
-        if self._shunt_energy_client is not None:
-            charged_kwh, discharged_kwh = (
-                self._shunt_energy_client._integrate_energy_totals(
-                    device_address=self.address,
-                    power_w=parsed_data.get("shunt_power"),
-                    now_ts=now,
-                )
-            )
-            parsed_data["energy_charged_total"] = round(charged_kwh, 3)
-            parsed_data["energy_discharged_total"] = round(discharged_kwh, 3)
-        parsed_data["raw_payload"] = raw_payload.hex()
-        parsed_data["raw_words"] = [
-            int.from_bytes(raw_payload[i : i + 2], "big", signed=False)
-            for i in range(0, len(raw_payload), 2)
-        ]
         self._filter_shunt_soc_jump(parsed_data)
 
         changed = any(
@@ -944,7 +974,7 @@ class RenogyActiveBluetoothCoordinator(
         if not changed and not stale:
             if not was_available and self.last_update_success:
                 self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
-            return True
+            return
 
         if self.device is not None:
             existing_data = (
@@ -962,7 +992,6 @@ class RenogyActiveBluetoothCoordinator(
         self._last_sustained_shunt_data = dict(parsed_data)
         self._last_sustained_shunt_push = now
         self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
-        return True
 
     async def _async_disconnect_shunt_client(self, client: Any) -> None:
         """Attempt to disconnect a shunt listener client without hanging."""
@@ -1142,6 +1171,20 @@ class RenogyActiveBluetoothCoordinator(
 
     async def _shunt_notification_loop(self) -> None:
         """Maintain a sustained notification listener for Smart Shunt devices."""
+        if self._shunt_decoder is None:
+            # Without the decoder every notification would be discarded, so
+            # fail visibly instead of reconnecting forever without data.
+            self.logger.error(
+                "Installed renogy-ble does not provide ShuntNotificationDecoder; "
+                "sustained Smart Shunt mode cannot run for %s",
+                self.address,
+            )
+            self._record_poll_availability(
+                False, RuntimeError("Smart Shunt decoder unavailable")
+            )
+            self.hass.loop.call_soon_threadsafe(self.async_update_listeners)
+            return
+
         while True:
             client: Any = None
             got_live_data = False
@@ -1198,6 +1241,9 @@ class RenogyActiveBluetoothCoordinator(
                             exc_info=True,
                         )
 
+                # Partial bytes from a previous connection cannot be completed
+                # by this one, so start each connection with an empty buffer.
+                self._shunt_decoder.reset_buffer()
                 await client.start_notify(shunt_notify_char_uuid, notification_handler)
                 self._last_shunt_payload_monotonic = time.monotonic()
                 while getattr(client, "is_connected", True):
@@ -1343,6 +1389,11 @@ class RenogyActiveBluetoothCoordinator(
 
                 if success and device.parsed_data:
                     self._filter_shunt_soc_jump(device.parsed_data)
+                    # Sensors and registry callbacks read the device directly,
+                    # so carry static info on both the device and coordinator.
+                    device.parsed_data = self._merge_static_device_info(
+                        dict(device.parsed_data)
+                    )
                     self.data = dict(device.parsed_data)
                     self.logger.debug("Updated coordinator data: %s", self.data)
                     self._warn_if_model_mismatch()
@@ -1492,6 +1543,20 @@ class RenogyActiveBluetoothCoordinator(
             self.logger.debug("Updated RIV control state: %s", updates)
 
         return updates
+
+    def _merge_static_device_info(self, fresh: dict[str, Any]) -> dict[str, Any]:
+        """Carry static device-info keys forward when a poll could not read them.
+
+        Only STATIC_DEVICE_INFO_KEYS are carried. A measurement missing from a
+        poll stays missing so a stale reading is never reported as current, and
+        a poll that does read the device-info registers wins over the carried
+        copy.
+        """
+        previous = self.data if isinstance(self.data, dict) else {}
+        for key in STATIC_DEVICE_INFO_KEYS:
+            if key not in fresh and key in previous:
+                fresh[key] = previous[key]
+        return fresh
 
     def _warn_if_model_mismatch(self) -> None:
         """Warn once when the reported model implies a different device type.
