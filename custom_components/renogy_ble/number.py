@@ -363,7 +363,8 @@ async def async_setup_entry(
 class RenogyNumberEntity(NumberEntity):
     """Representation of a Renogy BLE number entity."""
 
-    entity_description: RenogyNumberEntityDescription
+    # Narrows the description type; only assigned in __init__.
+    entity_description: RenogyNumberEntityDescription  # ty: ignore[invalid-mutable-override]
     _attr_has_entity_name = True
 
     def __init__(
@@ -404,11 +405,13 @@ class RenogyNumberEntity(NumberEntity):
         return super().suggested_object_id
 
     @property
-    def available(self) -> bool:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def available(self) -> bool:  # ty: ignore[invalid-property-type-override]
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def native_value(self) -> float | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def native_value(self) -> float | None:  # ty: ignore[invalid-property-type-override]
         if self._attr_native_value is not None:
             return self._attr_native_value
         data = None

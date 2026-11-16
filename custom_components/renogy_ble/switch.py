@@ -133,7 +133,8 @@ async def async_setup_entry(
 class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
     """Representation of a Renogy DC load switch."""
 
-    entity_description: RenogyBLESwitchDescription
+    # Narrows the description type; only assigned in __init__.
+    entity_description: RenogyBLESwitchDescription  # ty: ignore[invalid-mutable-override]
     coordinator: RenogyActiveBluetoothCoordinator
     _attr_has_entity_name = True
 
@@ -224,7 +225,8 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def is_on(self) -> bool | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def is_on(self) -> bool | None:  # ty: ignore[invalid-property-type-override]
         """Return True if the load is on."""
         value = self._get_load_status()
         if value is None:
@@ -267,7 +269,8 @@ class RenogyLoadSwitch(PassiveBluetoothCoordinatorEntity, SwitchEntity):
 class RenogyRegisterSwitch(SwitchEntity):
     """Writable RIV inverter switch backed by a Modbus register."""
 
-    entity_description: RenogyBLESwitchDescription
+    # Narrows the description type; only assigned in __init__.
+    entity_description: RenogyBLESwitchDescription  # ty: ignore[invalid-mutable-override]
     _attr_has_entity_name = True
 
     def __init__(
@@ -294,7 +297,8 @@ class RenogyRegisterSwitch(SwitchEntity):
         )
 
     @property
-    def available(self) -> bool:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def available(self) -> bool:  # ty: ignore[invalid-property-type-override]
         """Return whether the inverter switch is available."""
         return is_entity_available(self.coordinator, self._device)
 
@@ -311,7 +315,8 @@ class RenogyRegisterSwitch(SwitchEntity):
         return value if isinstance(value, int) else None
 
     @property
-    def is_on(self) -> bool | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def is_on(self) -> bool | None:  # ty: ignore[invalid-property-type-override]
         """Return the inverter switch state read back from the device."""
         if self._attr_is_on is not None:
             return self._attr_is_on

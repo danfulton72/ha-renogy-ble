@@ -168,11 +168,13 @@ class RenogyBatteryTypeSelect(SelectEntity):
         return super().suggested_object_id
 
     @property
-    def available(self) -> bool:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def available(self) -> bool:  # ty: ignore[invalid-property-type-override]
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def current_option(self) -> str | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def current_option(self) -> str | None:  # ty: ignore[invalid-property-type-override]
         if self._attr_current_option is not None:
             return self._attr_current_option
 
@@ -277,11 +279,13 @@ class RenogyMaxCurrentSelect(SelectEntity):
         return super().suggested_object_id
 
     @property
-    def available(self) -> bool:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def available(self) -> bool:  # ty: ignore[invalid-property-type-override]
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def current_option(self) -> str | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def current_option(self) -> str | None:  # ty: ignore[invalid-property-type-override]
         if self._attr_current_option is not None:
             return self._attr_current_option
         data = None
@@ -357,11 +361,13 @@ class RenogyOutputPrioritySelect(SelectEntity):
         )
 
     @property
-    def available(self) -> bool:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def available(self) -> bool:  # ty: ignore[invalid-property-type-override]
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def current_option(self) -> str | None:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def current_option(self) -> str | None:  # ty: ignore[invalid-property-type-override]
         if self._attr_current_option is not None:
             return self._attr_current_option
         data = None

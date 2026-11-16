@@ -1066,7 +1066,8 @@ def create_entities_helper(
 class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEntity):
     """Representation of a Renogy BLE sensor."""
 
-    entity_description: RenogyBLESensorDescription
+    # Narrows the description type; only assigned in __init__.
+    entity_description: RenogyBLESensorDescription  # ty: ignore[invalid-mutable-override]
     coordinator: RenogyActiveBluetoothCoordinator
     # Compose the friendly name from the device name so UI device renames
     # cascade to every entity (HA modern naming model).
@@ -1217,7 +1218,8 @@ class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEn
         return is_entity_available(self.coordinator, self._device)
 
     @property
-    def native_value(self) -> Any:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def native_value(self) -> Any:  # ty: ignore[invalid-property-type-override]
         """Return the sensor's value."""
         # Use cached value if available
         if self._attr_native_value is not None:
@@ -1343,7 +1345,8 @@ class RenogyBLESensor(PassiveBluetoothCoordinatorEntity, RestoreEntity, SensorEn
         self.async_write_ha_state()
 
     @property
-    def extra_state_attributes(self) -> Dict[str, Any]:
+    # Home Assistant declares this as a writable cached attribute; read it live.
+    def extra_state_attributes(self) -> Dict[str, Any]:  # ty: ignore[invalid-property-type-override]
         """Return additional state attributes."""
         attrs = {}
         if self._last_updated:
