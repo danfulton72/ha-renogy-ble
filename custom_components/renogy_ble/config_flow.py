@@ -73,7 +73,7 @@ CONFIG_SCHEMA = vol.Schema({**DEVICE_TYPE_SCHEMA, **SCAN_INTERVAL_SCHEMA})
 
 def _display_name_for_discovery(discovery_info: BluetoothServiceInfoBleak) -> str:
     """Return a stable display name for a discovered BLE device."""
-    if has_real_device_name(discovery_info.name):
+    if has_real_device_name(discovery_info.name, discovery_info.address):
         return discovery_info.name
 
     return UNKNOWN_DEVICE_NAME
@@ -86,6 +86,7 @@ def _detect_device_type_for_discovery(discovery_info: BluetoothServiceInfoBleak)
         discovery_info.name,
         DEFAULT_DEVICE_TYPE,
         manufacturer_data=manufacturer_data,
+        address=discovery_info.address,
     )
 
 
@@ -195,6 +196,7 @@ class RenogyConfigFlow(ConfigFlow, domain=DOMAIN):
         return is_supported_renogy_ble_name(
             discovery_info.name,
             manufacturer_data=manufacturer_data,
+            address=discovery_info.address,
         )
 
     async def async_step_bluetooth(

@@ -12,6 +12,7 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 
 from .const import (
     CONF_COMMUNICATION_HUB_ENABLED,
+    CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_MAX_FAILURES,
     CONF_NON_SHUNT_CONNECTION_MODE,
@@ -93,6 +94,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             non_shunt_connection_mode=non_shunt_connection_mode,
             max_failures=max_failures,
             unavailable_retry_interval=unavailable_retry_interval,
+            # Preserve the discovery name independently of the editable title.
+            device_name=entry.data.get(CONF_DEVICE_NAME),
             device_data_callback=device_data_callback,
             communication_hub_enabled=True,
         )
@@ -107,6 +110,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             non_shunt_connection_mode=non_shunt_connection_mode,
             max_failures=max_failures,
             unavailable_retry_interval=unavailable_retry_interval,
+            # Preserve the discovery name independently of the editable title.
+            device_name=entry.data.get(CONF_DEVICE_NAME),
             device_data_callback=device_data_callback,
         )
 
@@ -267,7 +272,7 @@ async def _handle_device_update(
             else:
                 LOGGER.warning("No parsed data for device %s", device.name)
 
-        if has_real_device_name(device.name):
+        if has_real_device_name(device.name, device.address):
             await update_device_registry(hass, entry, device)
 
 

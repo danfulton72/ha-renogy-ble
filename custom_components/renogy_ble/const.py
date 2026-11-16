@@ -148,3 +148,9 @@ DCC_BATTERY_TYPE_VALUES = {v: k for k, v in DCC_BATTERY_TYPES.items()}
 
 DCC_MAX_CURRENT_OPTIONS = [10, 20, 30, 40, 50, 60]
 DCC_MAX_CURRENT_TO_DEVICE = {amp: amp * 100 for amp in DCC_MAX_CURRENT_OPTIONS}
+
+# Device-info keys that never change for a device. The BT-TH module answers
+# these registers less reliably than the measurement registers, so a poll can
+# succeed without them. The coordinator carries these keys forward from the
+# previous poll instead of flipping their sensors to unknown.
+STATIC_DEVICE_INFO_KEYS: tuple[str, ...] = ("model", "device_id")

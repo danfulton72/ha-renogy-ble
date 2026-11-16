@@ -47,6 +47,7 @@ from .const import (
     DEFAULT_SHUNT_CONNECTION_MODE,
     DEFAULT_UNAVAILABLE_RETRY_INTERVAL,
     RIV_INVERTER_MODEL_PREFIX,
+    STATIC_DEVICE_INFO_KEYS,
     DeviceType,
     InverterRegister,
     NonShuntConnectionMode,
@@ -195,6 +196,7 @@ class RenogyActiveBluetoothCoordinator(
         non_shunt_connection_mode: str = DEFAULT_NON_SHUNT_CONNECTION_MODE,
         max_failures: int = DEFAULT_MAX_FAILURES,
         unavailable_retry_interval: int = DEFAULT_UNAVAILABLE_RETRY_INTERVAL,
+        device_name: str | None = None,
         device_data_callback: Callable[[RenogyBLEDevice], Awaitable[None]]
         | None = None,
     ):
@@ -209,6 +211,14 @@ class RenogyActiveBluetoothCoordinator(
             connectable=True,
         )
         self.device: RenogyBLEDevice | None = None
+        self._last_advertised_name: str | None = None
+        # The name resolved when the device was added, kept across restarts by
+        # the config entry. Advertisements are an unreliable source for it: the
+        # local name rides in the scan response only, so it is absent under
+        # passive scanning and intermittent under active scanning.
+        self.configured_name = (
+            device_name if has_real_device_name(device_name, address) else None
+        )
         self.scan_interval = scan_interval
         self.shunt_connection_mode = shunt_connection_mode
         self.non_shunt_connection_mode = non_shunt_connection_mode
@@ -688,6 +698,27 @@ class RenogyActiveBluetoothCoordinator(
         if callable(close_client):
             await close_client()
 
+    def _resolve_name(self, service_info: BluetoothServiceInfoBleak) -> str | None:
+        """Return the best available device name for this advertisement.
+
+        Sources are tried in order: the last real local name seen in an
+        advertisement, Home Assistant's service-info name, BlueZ's cached name
+        on the BLEDevice, and finally the name saved in the config entry. Each
+        candidate is rejected when it is only the device address.
+        """
+        local_name = getattr(service_info.advertisement, "local_name", None)
+        if has_real_device_name(local_name, service_info.address):
+            self._last_advertised_name = clean_device_name(local_name)
+        for candidate in (
+            self._last_advertised_name,
+            service_info.name,
+            getattr(service_info.device, "name", None),
+            self.configured_name,
+        ):
+            if has_real_device_name(candidate, service_info.address):
+                return clean_device_name(candidate)
+        return None
+
     def _update_device_from_service_info(
         self, service_info: BluetoothServiceInfoBleak
     ) -> RenogyBLEDevice:
@@ -696,16 +727,18 @@ class RenogyActiveBluetoothCoordinator(
         if not manufacturer_data and self.device is not None:
             # Some follow-up advertisements omit manufacturer data entirely.
             manufacturer_data = self.device.manufacturer_data
+        resolved_name = self._resolve_name(service_info)
         detected_type = detect_device_type_from_ble_name(
-            service_info.name,
+            resolved_name,
             self.device_type,
             manufacturer_data=manufacturer_data,
+            address=service_info.address,
         )
         if self.device_type != detected_type:
             self.logger.debug(
                 "Detected %s device from BLE name: %s",
                 detected_type,
-                service_info.name,
+                resolved_name,
             )
             self.device_type = detected_type
 
@@ -720,21 +753,33 @@ class RenogyActiveBluetoothCoordinator(
                 service_info.advertisement.rssi,
                 device_type=detected_type,
                 manufacturer_data=manufacturer_data,
+                advertisement_name=resolved_name,
                 max_failures=self.max_failures,
                 unavailable_retry_interval=self.unavailable_retry_interval,
             )
+            # The library names the device from BLEDevice.name, which can be
+            # the address under passive scanning. Prefer the resolved name.
+            if resolved_name:
+                self.device.name = resolved_name
         else:
             old_name = self.device.name
             self.device.ble_device = service_info.device
             self.device.manufacturer_data = dict(manufacturer_data)
-            if has_real_device_name(service_info.name):
-                cleaned_name = clean_device_name(service_info.name)
-                if old_name != cleaned_name:
-                    self.device.name = cleaned_name
+            # A name read from the device's own registers is authoritative, so
+            # advertisements only rename devices that have not reported one.
+            hardware_name = self.device.parsed_data.get("device_name")
+            if resolved_name:
+                # Battery protocol detection keys on the advertised name.
+                self.device.advertised_name = resolved_name
+                if (
+                    not has_real_device_name(hardware_name, self.address)
+                    and old_name != resolved_name
+                ):
+                    self.device.name = resolved_name
                     self.logger.debug(
                         "Updated device name from '%s' to '%s'",
                         old_name,
-                        cleaned_name,
+                        resolved_name,
                     )
 
             self.device.rssi = (
@@ -1343,6 +1388,11 @@ class RenogyActiveBluetoothCoordinator(
 
                 if success and device.parsed_data:
                     self._filter_shunt_soc_jump(device.parsed_data)
+                    # Sensors and registry callbacks read the device directly,
+                    # so carry static info on both the device and coordinator.
+                    device.parsed_data = self._merge_static_device_info(
+                        dict(device.parsed_data)
+                    )
                     self.data = dict(device.parsed_data)
                     self.logger.debug("Updated coordinator data: %s", self.data)
                     self._warn_if_model_mismatch()
@@ -1492,6 +1542,20 @@ class RenogyActiveBluetoothCoordinator(
             self.logger.debug("Updated RIV control state: %s", updates)
 
         return updates
+
+    def _merge_static_device_info(self, fresh: dict[str, Any]) -> dict[str, Any]:
+        """Carry static device-info keys forward when a poll could not read them.
+
+        Only STATIC_DEVICE_INFO_KEYS are carried. A measurement missing from a
+        poll stays missing so a stale reading is never reported as current, and
+        a poll that does read the device-info registers wins over the carried
+        copy.
+        """
+        previous = self.data if isinstance(self.data, dict) else {}
+        for key in STATIC_DEVICE_INFO_KEYS:
+            if key not in fresh and key in previous:
+                fresh[key] = previous[key]
+        return fresh
 
     def _warn_if_model_mismatch(self) -> None:
         """Warn once when the reported model implies a different device type.
