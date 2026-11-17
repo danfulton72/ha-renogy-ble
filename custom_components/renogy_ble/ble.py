@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from types import ModuleType
 from typing import Any, cast
 
+import bleak_retry_connector
 from bleak import BleakClient, BleakError
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak_retry_connector import (
@@ -159,9 +160,20 @@ SHUNT_FORCE_UPDATE_INTERVAL_SECONDS = 300
 # Reject implausible Smart Shunt SOC jumps while continuing to publish the
 # rest of a valid payload. This is an absolute percentage-point delta.
 SHUNT_SOC_MAX_JUMP_PERCENTAGE_POINTS = 20.0
-# Bounds for the per-poll BLE timeout derived from the configured scan interval.
+# Bounds for the data-read share of the per-poll BLE timeout, derived from the
+# configured scan interval.
 POLL_TIMEOUT_FLOOR_SECONDS = 30.0
 POLL_TIMEOUT_CEILING_SECONDS = 120.0
+# The renogy-ble clients connect through bleak_retry_connector with up to three
+# attempts, each bounded by its BLEAK_TIMEOUT, plus short waits between them.
+# The poll budget reserves that time on top of the read budget; otherwise a
+# slow first attempt leaves the retries no time and they are cancelled.
+POLL_CONNECT_ATTEMPTS = 3
+POLL_CONNECT_MARGIN_SECONDS = 10.0
+POLL_CONNECT_BUDGET_SECONDS = (
+    POLL_CONNECT_ATTEMPTS * float(getattr(bleak_retry_connector, "BLEAK_TIMEOUT", 20.0))
+    + POLL_CONNECT_MARGIN_SECONDS
+)
 # The interval timer and poll timestamp can differ by a small amount of scheduler
 # jitter. Allow only a fixed one-second early window rather than a percentage of
 # the configured interval, which could otherwise become a full minute at long
@@ -476,11 +488,14 @@ class RenogyActiveBluetoothCoordinator(
         The budget covers connection setup, telemetry, and any RIV settings
         readback. Without a single outer bound, each phase can consume a full
         timeout and keep ``_connection_lock`` occupied for several intervals.
+        Connection setup gets its own fixed share so the library's connection
+        retries can finish before the read budget is counted.
         """
-        return min(
+        read_budget = min(
             max(float(self.scan_interval), POLL_TIMEOUT_FLOOR_SECONDS),
             POLL_TIMEOUT_CEILING_SECONDS,
         )
+        return POLL_CONNECT_BUDGET_SECONDS + read_budget
 
     async def _async_reset_client_session(self) -> None:
         """Drop any pooled BLE session so the next attempt reconnects cleanly."""
@@ -1344,7 +1359,9 @@ class RenogyActiveBluetoothCoordinator(
                 )
 
                 poll_timeout = self._poll_timeout()
-                phase = "telemetry read"
+                # The library connects inside read_device, so this phase covers
+                # connection setup as well as the telemetry read.
+                phase = "connection setup or telemetry read"
                 try:
                     async with asyncio.timeout(poll_timeout):
                         try:
@@ -1375,7 +1392,12 @@ class RenogyActiveBluetoothCoordinator(
                     # Preserve successful telemetry if only the optional RIV readback
                     # timed out, but always drop pooled state before the next poll.
                     if not success:
-                        error = err
+                        # TimeoutError has no message, which left the failure
+                        # log reading "Error message: " with nothing after it.
+                        error = TimeoutError(
+                            f"BLE poll exceeded {poll_timeout:.0f}s during {phase}"
+                        )
+                        error.__cause__ = err
                     self.logger.info(
                         "BLE poll for %s exceeded %.0fs during %s; resetting session",
                         device.address,
