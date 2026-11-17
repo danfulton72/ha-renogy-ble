@@ -156,12 +156,62 @@ def test_interval_timer_polls_when_advertisements_stop() -> None:
 
 
 def test_poll_timeout_is_bounded() -> None:
-    """The per-poll budget stays inside the configured floor and ceiling."""
+    """The read share of the budget stays inside the floor and ceiling."""
     ble_module = _load_ble_module()
+    connect = ble_module.POLL_CONNECT_BUDGET_SECONDS
 
-    assert _coordinator(ble_module, scan_interval=10)._poll_timeout() == 30.0
-    assert _coordinator(ble_module, scan_interval=60)._poll_timeout() == 60.0
-    assert _coordinator(ble_module, scan_interval=600)._poll_timeout() == 120.0
+    assert _coordinator(ble_module, scan_interval=10)._poll_timeout() == connect + 30
+    assert _coordinator(ble_module, scan_interval=60)._poll_timeout() == connect + 60
+    assert _coordinator(ble_module, scan_interval=600)._poll_timeout() == connect + 120
+
+
+def test_poll_timeout_leaves_room_for_every_connection_attempt() -> None:
+    """Connection retries must finish before the poll budget cancels them.
+
+    With a 30-second poll budget and 20-second attempts, a slow first attempt
+    left the second only 10 seconds and the third none, so an intermittently
+    reachable device could never use its retries.
+    """
+    ble_module = _load_ble_module()
+    attempt_timeout = 20.0
+
+    assert ble_module.POLL_CONNECT_BUDGET_SECONDS >= 3 * attempt_timeout
+    for scan_interval in (10, 15, 60, 600):
+        timeout = _coordinator(ble_module, scan_interval=scan_interval)._poll_timeout()
+        assert timeout - 3 * attempt_timeout >= ble_module.POLL_TIMEOUT_FLOOR_SECONDS
+
+
+def test_poll_timeout_error_names_the_phase() -> None:
+    """A timed-out poll records a readable error instead of an empty one."""
+    ble_module = _load_ble_module()
+    coordinator = _coordinator(ble_module)
+    device = _PollableDevice()
+    coordinator.device = device
+    coordinator._update_device_from_service_info = MagicMock(return_value=device)
+    coordinator._poll_timeout = lambda: 0.05
+    recorded: list[Exception | None] = []
+    coordinator._record_poll_availability = lambda _success, error: recorded.append(
+        error
+    )
+
+    async def _hang(_device):
+        await asyncio.sleep(30)
+
+    coordinator._ble_client = MagicMock()
+    coordinator._ble_client.read_device = _hang
+    coordinator._ble_client.close = AsyncMock()
+
+    assert (
+        asyncio.run(coordinator._read_device_data(_service_info(ble_module))) is False
+    )
+
+    assert len(recorded) == 1
+    assert isinstance(recorded[0], TimeoutError)
+    assert str(recorded[0]) == (
+        "BLE poll exceeded 0s during connection setup or telemetry read"
+    )
+    message = coordinator.logger.info.call_args_list[-1].args
+    assert message[3] == "connection setup or telemetry read"
 
 
 def test_stalled_read_times_out_and_releases_the_lock() -> None:
